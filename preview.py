@@ -7,7 +7,7 @@ from collections import Counter
 DATA = os.path.join("data", "items.json")
 OUT = "index.html"
 
-SOURCES = ["国家税务局", "中注协", "会计视野"]
+SOURCES = ["国家税务局", "中注协", "会计视野", "CPA业务探讨", "内部审计"]
 
 # 顶部官网直达入口
 OFFICIAL_SITES = [
@@ -62,6 +62,8 @@ def main():
     --tax: #b45309; --tax-bg: #fef3c7;
     --cicpa: #0f766e; --cicpa-bg: #ccfbf1;
     --esnai: #1d4ed8; --esnai-bg: #dbeafe;
+    --cpa: #7c3aed; --cpa-bg: #ede9fe;
+    --audit: #be185d; --audit-bg: #fce7f3;
     --shadow-sm: 0 1px 2px rgba(16,24,40,.05);
     --shadow-md: 0 4px 14px rgba(16,24,40,.08);
   }
@@ -137,12 +139,19 @@ def main():
   .tag { padding: 2px 9px; border-radius: 6px; font-size: 12px; font-weight: 500; }
   .tag.cicpa { background: var(--cicpa-bg); color: var(--cicpa); }
   .tag.esnai { background: var(--esnai-bg); color: var(--esnai); }
+  .tag.cpa { background: var(--cpa-bg); color: var(--cpa); }
+  .tag.audit { background: var(--audit-bg); color: var(--audit); }
   .tag.tax { background: var(--tax-bg); color: var(--tax); }
   .card h2 { font-size: 16px; font-weight: 600; margin: 8px 0 6px; line-height: 1.45; }
   .card h2 a { color: var(--text); text-decoration: none; }
   .card h2 a:hover { color: var(--primary); }
   .card .sum { font-size: 13.5px; color: #5a6472; }
   .empty { text-align: center; color: var(--muted); padding: 56px 0; font-size: 14px; }
+  .card.new { border-left: 3px solid #e11d48; background: linear-gradient(90deg, #fff5f6 0%, #ffffff 40%); }
+  .badge-new {
+    display: inline-flex; align-items: center; background: #ffe4e6; color: #e11d48;
+    padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.5;
+  }
 
   @media (max-width: 720px) {
     .main { flex-direction: column; }
@@ -201,7 +210,18 @@ function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 function tagFor(source) {
   if (source === '中注协') return '<span class="tag cicpa">中注协</span>';
   if (source === '国家税务局') return '<span class="tag tax">国家税务局</span>';
+  if (source === 'CPA业务探讨') return '<span class="tag cpa">CPA业务探讨</span>';
+  if (source === '内部审计') return '<span class="tag audit">内部审计</span>';
   return '<span class="tag esnai">会计视野</span>';
+}
+
+// 判断日期是否在最近 30 天内（用于「新」高亮）
+function isRecent(d) {
+  if (!d) return false;
+  const t = new Date(d + 'T00:00:00');
+  if (isNaN(t)) return false;
+  const diff = (Date.now() - t.getTime()) / 86400000;
+  return diff >= 0 && diff <= 30;
 }
 
 function render() {
@@ -219,8 +239,11 @@ function render() {
   }
   list.innerHTML = rows.map(it => {
     const sum = (it.content || '').slice(0, 140).replace(/\\n/g, ' ');
-    return '<div class="card">' +
-      '<div class="meta">' + tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span></div>' +
+    const isNew = isRecent(it.date);
+    const newClass = isNew ? ' new' : '';
+    const newBadge = isNew ? '<span class="badge-new">新</span>' : '';
+    return '<div class="card' + newClass + '">' +
+      '<div class="meta">' + tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span>' + newBadge + '</div>' +
       '<h2><a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a></h2>' +
       (sum ? '<div class="sum">' + esc(sum) + '…</div>' : '<div class="sum">（正文待抓取）</div>') +
       '</div>';
