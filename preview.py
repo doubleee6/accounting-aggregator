@@ -31,6 +31,7 @@ def main():
 
     # 左侧分类导航（支持两级：中国会计视野 → CPA业务探讨/内部审计）
     GROUPS = [
+        ("财政部", None),
         ("国家税务局", None),
         ("中注协", None),
         ("中国会计视野", ["CPA业务探讨", "内部审计"]),
@@ -86,6 +87,7 @@ def main():
     --esnai: #1d4ed8; --esnai-bg: #dbeafe;
     --cpa: #7c3aed; --cpa-bg: #ede9fe;
     --audit: #be185d; --audit-bg: #fce7f3;
+    --mof: #1e40af; --mof-bg: #e0e7ff;
     --shadow-sm: 0 1px 2px rgba(16,24,40,.05);
     --shadow-md: 0 4px 14px rgba(16,24,40,.08);
   }
@@ -168,6 +170,7 @@ def main():
   .tag.esnai { background: var(--esnai-bg); color: var(--esnai); }
   .tag.cpa { background: var(--cpa-bg); color: var(--cpa); }
   .tag.audit { background: var(--audit-bg); color: var(--audit); }
+  .tag.mof { background: var(--mof-bg); color: var(--mof); }
   .tag.tax { background: var(--tax-bg); color: var(--tax); }
   .card h2 { font-size: 16px; font-weight: 600; margin: 8px 0 6px; line-height: 1.45; }
   .card h2 a { color: var(--text); text-decoration: none; }
@@ -236,6 +239,7 @@ let kw = '';
 function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function tagFor(source) {
+  if (source === '财政部') return '<span class="tag mof">财政部</span>';
   if (source === '中注协') return '<span class="tag cicpa">中注协</span>';
   if (source === '国家税务局') return '<span class="tag tax">国家税务局</span>';
   if (source === 'CPA业务探讨') return '<span class="tag cpa">CPA业务探讨</span>';

@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-from fetcher import cicpa, chinatax, bbs
+from fetcher import cicpa, chinatax, bbs, mof
 
 DATA_DIR = "data"
 OUTPUT = os.path.join(DATA_DIR, "items.json")
@@ -53,8 +53,9 @@ def main():
     cicpa_list = safe_fetch("中注协", cicpa.fetch_list)
     tax_list = safe_fetch("国家税务局", chinatax.fetch_list)
     bbs_list = safe_fetch("论坛", bbs.fetch_list)
-    raw = cicpa_list + tax_list + bbs_list
-    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，国家税务局 {len(tax_list)} 条，论坛 {len(bbs_list)} 条")
+    mof_list = safe_fetch("财政部", mof.fetch_list)
+    raw = cicpa_list + tax_list + bbs_list + mof_list
+    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，国家税务局 {len(tax_list)} 条，论坛 {len(bbs_list)} 条，财政部 {len(mof_list)} 条")
 
     # 2. 内存去重（URL md5 唯一键）
     seen, merged = set(), []
@@ -70,6 +71,7 @@ def main():
 
     # 4. 对所有新增条目抓正文（论坛正文需登录，RSS 已含摘要，返回空保留原 content）
     detail_fetchers = {
+        "财政部": mof.fetch_detail,
         "国家税务局": chinatax.fetch_detail,
         "中注协": cicpa.fetch_detail,
         "内部审计": bbs.fetch_detail,
