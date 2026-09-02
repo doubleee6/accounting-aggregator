@@ -17,6 +17,35 @@ OFFICIAL_SITES = [
     {"name": "函证导航", "url": "https://confirm.maoyanqing.com/"},
 ]
 
+# 每日摘要：主题词表（会计/审计/税务常见主题）
+THEMES = [
+    "增值税", "企业所得税", "个人所得税", "研发费用", "加计扣除", "发票", "函证",
+    "审计", "处罚", "惩戒", "税收优惠", "免税", "退税", "进项", "销项", "汇算清缴",
+    "预缴", "小规模纳税人", "一般纳税人", "股份支付", "合并", "关联", "内审", "内控",
+    "折旧", "存货", "减值", "股权", "重组", "亏损", "弥补", "留抵", "收入", "成本",
+    "行政处罚", "严重失信", "执业质量", "非居民", "出口", "离境",
+]
+
+
+def summarize_day(items):
+    """生成单日摘要：条数 + 来源分布 + 热点主题。"""
+    n = len(items)
+    by_source = Counter(it.get("source", "") for it in items)
+    src_parts = "、".join(f"{k}{v}条" for k, v in by_source.most_common())
+    kc = Counter()
+    for it in items:
+        title = it.get("title", "") or ""
+        for w in THEMES:
+            if w in title:
+                kc[w] += 1
+    hot = "、".join(w for w, _ in kc.most_common(4))
+    parts = [f"共 {n} 条"]
+    if src_parts:
+        parts.append(src_parts)
+    if hot:
+        parts.append(f"热点：{hot}")
+    return " · ".join(parts)
+
 
 def main():
     with open(DATA, "r", encoding="utf-8") as f:
@@ -28,6 +57,20 @@ def main():
     total = len(items)
 
     data_js = json.dumps(items, ensure_ascii=False)
+
+    # 每日摘要：最近 14 天每天一组，更早的合并为「更早」
+    by_day = {}
+    for it in items:
+        d = it.get("date", "") or "未知"
+        by_day.setdefault(d, []).append(it)
+    days_sorted = sorted(by_day.keys(), reverse=True)
+    recent_days = days_sorted[:14]
+    old_days = days_sorted[14:]
+    daily_summaries = {d: summarize_day(by_day[d]) for d in recent_days}
+    if old_days:
+        old_items = [it for d in old_days for it in by_day[d]]
+        daily_summaries["更早"] = summarize_day(old_items)
+    daily_js = json.dumps(daily_summaries, ensure_ascii=False)
 
     # 左侧分类导航（支持两级：中国会计视野 → CPA业务探讨/内部审计）
     GROUPS = [
@@ -183,6 +226,45 @@ def main():
     padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.5;
   }
 
+  /* Tab 切换 */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab {
+    padding: 9px 20px; border-radius: 10px; font-size: 14px; cursor: pointer;
+    color: #4b5563; background: var(--card); border: 1px solid var(--border);
+    transition: all .15s; font-weight: 500;
+  }
+  .tab:hover { border-color: var(--primary); color: var(--primary); }
+  .tab.active { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+
+  /* 每日更新看板 */
+  .daily-board { max-width: 760px; }
+  .day-group {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    margin-bottom: 12px; box-shadow: var(--shadow-sm); overflow: hidden;
+  }
+  .day-head {
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    cursor: pointer; user-select: none;
+  }
+  .day-head:hover { background: #f8fafb; }
+  .day-title { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .day-title .today-flag { color: #e11d48; font-weight: 700; }
+  .day-summary { flex: 1; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .day-arrow { color: var(--muted); transition: transform .15s; font-size: 12px; flex-shrink: 0; }
+  .day-group.open .day-arrow { transform: rotate(180deg); }
+  .day-body { display: none; padding: 0 18px 16px; }
+  .day-group.open .day-body { display: block; }
+  .d-src { margin-top: 12px; }
+  .d-src-name { font-size: 12.5px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+  .d-card {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border-radius: 8px; font-size: 14px; transition: background .12s;
+  }
+  .d-card:hover { background: #f2f4f7; }
+  .d-card .tag { flex-shrink: 0; }
+  .d-card a { color: var(--text); text-decoration: none; flex: 1; min-width: 0; }
+  .d-card a:hover { color: var(--primary); }
+
   @media (max-width: 720px) {
     .main { flex-direction: column; }
     .sidebar { width: 100%; position: static; }
@@ -207,6 +289,12 @@ def main():
 __SITES__
   </div>
 
+  <div class="tabs">
+    <div class="tab active" data-tab="browse">分类浏览</div>
+    <div class="tab" data-tab="daily">每日更新</div>
+  </div>
+
+  <div id="view-browse">
   <div class="searchbar">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <input type="search" id="q" placeholder="搜索标题或正文关键词，如：增值税 / 公开谴责 / 函证">
@@ -227,12 +315,19 @@ __NAV__
       <div class="list" id="list"></div>
     </section>
   </div>
+  </div>
+
+  <div id="view-daily" style="display:none">
+    <div class="daily-board" id="dailyBoard"></div>
+  </div>
 </div>
 <script>
 const DATA = __DATA__;
 const MATCH = __MATCH__;
+const DAILY = __DAILY__;
 const list = document.getElementById('list');
 const count = document.getElementById('count');
+const dailyBoard = document.getElementById('dailyBoard');
 let src = 'all';
 let kw = '';
 
@@ -254,6 +349,64 @@ function isRecent(d) {
   if (isNaN(t)) return false;
   const diff = (Date.now() - t.getTime()) / 86400000;
   return diff >= 0 && diff <= 30;
+}
+
+// 日期相对标签（今天 / 昨天 / 具体日期）
+function dayLabel(d) {
+  const pad = n => String(n).padStart(2, '0');
+  const t = new Date();
+  const ts = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate());
+  const y = new Date(Date.now() - 86400000);
+  const ys = y.getFullYear() + '-' + pad(y.getMonth() + 1) + '-' + pad(y.getDate());
+  if (d === ts) return '<span class="today-flag">今天</span> · ' + d;
+  if (d === ys) return '昨天 · ' + d;
+  return d;
+}
+
+// 折叠/展开某一天
+function toggleDay(head) {
+  head.parentElement.classList.toggle('open');
+}
+
+// 生成某一天的看板块
+function buildDay(d, items, open) {
+  const summary = DAILY[d] || '';
+  const bySrc = {};
+  items.forEach(it => { (bySrc[it.source] = bySrc[it.source] || []).push(it); });
+  const srcBlocks = Object.keys(bySrc).map(src => {
+    const cards = bySrc[src].map(it =>
+      '<div class="d-card">' + tagFor(it.source) +
+      '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a></div>'
+    ).join('');
+    return '<div class="d-src"><div class="d-src-name">' + esc(src) + ' · ' + bySrc[src].length + ' 条</div>' + cards + '</div>';
+  }).join('');
+  const title = d === '更早' ? '更早 · ' + items.length + ' 条' : dayLabel(d);
+  return '<div class="day-group' + (open ? ' open' : '') + '">' +
+    '<div class="day-head" onclick="toggleDay(this)">' +
+      '<div class="day-title">' + title + '</div>' +
+      '<div class="day-summary">' + esc(summary) + '</div>' +
+      '<span class="day-arrow">▾</span>' +
+    '</div>' +
+    '<div class="day-body">' + srcBlocks + '</div>' +
+  '</div>';
+}
+
+// 渲染每日更新看板：最近 14 天每天一组，更早的合并
+function renderDaily() {
+  const groups = {};
+  DATA.forEach(it => {
+    const d = it.date || '未知';
+    (groups[d] = groups[d] || []).push(it);
+  });
+  const days = Object.keys(groups).sort().reverse();
+  const recentDays = days.slice(0, 14);
+  const oldDays = days.slice(14);
+  let blocks = recentDays.map((d, i) => buildDay(d, groups[d], i < 2)).join('');
+  if (oldDays.length) {
+    const oldItems = oldDays.reduce((a, d) => a.concat(groups[d]), []);
+    blocks += buildDay('更早', oldItems, false);
+  }
+  dailyBoard.innerHTML = blocks;
 }
 
 function render() {
@@ -299,12 +452,25 @@ document.getElementById('sidebar').addEventListener('click', e => {
   src = item.dataset.src;
   render();
 });
+
+// Tab 切换：分类浏览 / 每日更新
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const isDaily = tab.dataset.tab === 'daily';
+    document.getElementById('view-browse').style.display = isDaily ? 'none' : '';
+    document.getElementById('view-daily').style.display = isDaily ? '' : 'none';
+    if (isDaily) renderDaily();
+  });
+});
+
 render();
 </script>
 </body>
 </html>"""
 
-    html = html.replace("__NAV__", nav_html).replace("__SITES__", sites_html).replace("__DATA__", data_js).replace("__MATCH__", match_js)
+    html = html.replace("__NAV__", nav_html).replace("__SITES__", sites_html).replace("__DATA__", data_js).replace("__MATCH__", match_js).replace("__DAILY__", daily_js)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"已生成 {OUT}，共 {total} 条数据")
