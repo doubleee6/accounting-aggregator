@@ -7,8 +7,6 @@ from collections import Counter
 DATA = os.path.join("data", "items.json")
 OUT = "index.html"
 
-SOURCES = ["国家税务局", "中注协", "会计视野", "CPA业务探讨", "内部审计"]
-
 # 顶部官网直达入口
 OFFICIAL_SITES = [
     {"name": "国家税务总局", "url": "https://www.chinatax.gov.cn/"},
@@ -31,16 +29,41 @@ def main():
 
     data_js = json.dumps(items, ensure_ascii=False)
 
-    # 左侧分类导航
+    # 左侧分类导航（支持两级：会计视野论坛 → CPA业务探讨/内部审计）
+    GROUPS = [
+        ("国家税务局", None),
+        ("中注协", None),
+        ("会计视野", None),
+        ("会计视野论坛", ["CPA业务探讨", "内部审计"]),
+    ]
     nav = ['<div class="nav-item active" data-src="all"><span>全部</span><span class="badge">%d</span></div>' % total]
-    for s in SOURCES:
-        c = counts.get(s, 0)
-        soon = '<span class="soon">待接入</span>' if c == 0 else ''
-        nav.append(
-            '<div class="nav-item" data-src="%s"><span>%s</span><span class="badge">%d</span>%s</div>'
-            % (s, s, c, soon)
-        )
+    match_map = {}
+    for name, children in GROUPS:
+        if children is None:
+            c = counts.get(name, 0)
+            match_map[name] = [name]
+            nav.append(
+                '<div class="nav-item" data-src="%s"><span>%s</span><span class="badge">%d</span></div>'
+                % (name, name, c)
+            )
+        else:
+            parent_c = sum(counts.get(ch, 0) for ch in children)
+            match_map[name] = children
+            nav.append(
+                '<div class="nav-item nav-parent" data-src="%s"><span>%s</span><span class="badge">%d</span><span class="arrow">▾</span></div>'
+                % (name, name, parent_c)
+            )
+            nav.append('<div class="nav-children">')
+            for ch in children:
+                c = counts.get(ch, 0)
+                match_map[ch] = [ch]
+                nav.append(
+                    '<div class="nav-item nav-child" data-src="%s"><span>%s</span><span class="badge">%d</span></div>'
+                    % (ch, ch, c)
+                )
+            nav.append('</div>')
     nav_html = "\n".join(nav)
+    match_js = json.dumps(match_map, ensure_ascii=False)
 
     # 顶部官网直达（胶囊样式，无外链图标）
     sites_html = "\n".join(
@@ -125,6 +148,11 @@ def main():
   .nav-item .badge { margin-left: auto; background: #eceef1; color: #6b7280; border-radius: 10px; padding: 1px 8px; font-size: 12px; }
   .nav-item.active .badge { background: #cfe8e2; color: var(--primary); }
   .nav-item .soon { font-size: 11px; color: var(--tax); background: var(--tax-bg); border-radius: 6px; padding: 1px 6px; font-weight: 500; }
+  .nav-parent .arrow { font-size: 11px; color: var(--muted); margin-left: 4px; transition: transform .15s; }
+  .nav-parent.open .arrow { transform: rotate(180deg); }
+  .nav-children { display: none; padding-left: 6px; margin-top: 2px; }
+  .nav-children.open { display: block; }
+  .nav-child { padding-left: 20px; font-size: 13px; }
 
   /* 右侧内容 */
   .content { flex: 1; min-width: 0; }
@@ -200,6 +228,7 @@ __NAV__
 </div>
 <script>
 const DATA = __DATA__;
+const MATCH = __MATCH__;
 const list = document.getElementById('list');
 const count = document.getElementById('count');
 let src = 'all';
@@ -227,7 +256,7 @@ function isRecent(d) {
 function render() {
   const q = kw.toLowerCase();
   const rows = DATA.filter(it => {
-    if (src !== 'all' && it.source !== src) return false;
+    if (src !== 'all' && !(MATCH[src] || []).includes(it.source)) return false;
     if (q && !(it.title + ' ' + (it.content || '')).toLowerCase().includes(q)) return false;
     return true;
   });
@@ -254,6 +283,14 @@ document.getElementById('q').addEventListener('input', e => { kw = e.target.valu
 document.getElementById('sidebar').addEventListener('click', e => {
   const item = e.target.closest('.nav-item');
   if (!item) return;
+  // 父级点击：切换子分类展开/收起
+  if (item.classList.contains('nav-parent')) {
+    item.classList.toggle('open');
+    const children = item.nextElementSibling;
+    if (children && children.classList.contains('nav-children')) {
+      children.classList.toggle('open', item.classList.contains('open'));
+    }
+  }
   document.querySelectorAll('.nav-item').forEach(c => c.classList.remove('active'));
   item.classList.add('active');
   src = item.dataset.src;
@@ -264,7 +301,7 @@ render();
 </body>
 </html>"""
 
-    html = html.replace("__NAV__", nav_html).replace("__SITES__", sites_html).replace("__DATA__", data_js)
+    html = html.replace("__NAV__", nav_html).replace("__SITES__", sites_html).replace("__DATA__", data_js).replace("__MATCH__", match_js)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"已生成 {OUT}，共 {total} 条数据")
