@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-from fetcher import cicpa, esnai, chinatax, bbs
+from fetcher import cicpa, chinatax, bbs
 
 DATA_DIR = "data"
 OUTPUT = os.path.join(DATA_DIR, "items.json")
@@ -51,11 +51,10 @@ def main():
             return []
 
     cicpa_list = safe_fetch("中注协", cicpa.fetch_list)
-    esnai_list = safe_fetch("会计视野", esnai.fetch_list)
     tax_list = safe_fetch("国家税务局", chinatax.fetch_list)
     bbs_list = safe_fetch("论坛", bbs.fetch_list)
-    raw = cicpa_list + esnai_list + tax_list + bbs_list
-    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，会计视野 {len(esnai_list)} 条，国家税务局 {len(tax_list)} 条，论坛 {len(bbs_list)} 条")
+    raw = cicpa_list + tax_list + bbs_list
+    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，国家税务局 {len(tax_list)} 条，论坛 {len(bbs_list)} 条")
 
     # 2. 内存去重（URL md5 唯一键）
     seen, merged = set(), []
@@ -73,12 +72,11 @@ def main():
     detail_fetchers = {
         "国家税务局": chinatax.fetch_detail,
         "中注协": cicpa.fetch_detail,
-        "会计视野": esnai.fetch_detail,
         "内部审计": bbs.fetch_detail,
         "CPA业务探讨": bbs.fetch_detail,
     }
     for i, it in enumerate(new_items, 1):
-        fetcher = detail_fetchers.get(it["source"], esnai.fetch_detail)
+        fetcher = detail_fetchers.get(it["source"], lambda url: "")
         detail = fetch_detail_with_retry(fetcher, it["url"])
         if detail:
             it["content"] = detail

@@ -29,12 +29,11 @@ def main():
 
     data_js = json.dumps(items, ensure_ascii=False)
 
-    # 左侧分类导航（支持两级：会计视野论坛 → CPA业务探讨/内部审计）
+    # 左侧分类导航（支持两级：中国会计视野 → CPA业务探讨/内部审计）
     GROUPS = [
         ("国家税务局", None),
         ("中注协", None),
-        ("会计视野", None),
-        ("会计视野论坛", ["CPA业务探讨", "内部审计"]),
+        ("中国会计视野", ["CPA业务探讨", "内部审计"]),
     ]
     nav = ['<div class="nav-item active" data-src="all"><span>全部</span><span class="badge">%d</span></div>' % total]
     match_map = {}
