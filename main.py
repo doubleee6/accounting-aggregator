@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-from fetcher import cicpa, esnai
+from fetcher import cicpa, esnai, chinatax
 
 DATA_DIR = "data"
 OUTPUT = os.path.join(DATA_DIR, "items.json")
@@ -42,11 +42,12 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     existing_ids = load_existing_ids()
 
-    # 1. 抓两站列表并合并
+    # 1. 抓三站列表并合并
     cicpa_list = cicpa.fetch_list()
     esnai_list = esnai.fetch_list()
-    raw = cicpa_list + esnai_list
-    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，会计视野 {len(esnai_list)} 条")
+    tax_list = chinatax.fetch_list()
+    raw = cicpa_list + esnai_list + tax_list
+    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，会计视野 {len(esnai_list)} 条，国家税务局 {len(tax_list)} 条")
 
     # 2. 内存去重（URL md5 唯一键）
     seen, merged = set(), []
@@ -61,8 +62,13 @@ def main():
     print(f"去重后 {len(merged)} 条；本次新增 {len(new_items)} 条，已存在 {len(merged) - len(new_items)} 条")
 
     # 4. 对所有新增条目抓正文
+    detail_fetchers = {
+        "国家税务局": chinatax.fetch_detail,
+        "中注协": cicpa.fetch_detail,
+        "会计视野": esnai.fetch_detail,
+    }
     for i, it in enumerate(new_items, 1):
-        fetcher = cicpa.fetch_detail if it["source"] == "中注协" else esnai.fetch_detail
+        fetcher = detail_fetchers.get(it["source"], esnai.fetch_detail)
         it["content"] = fetch_detail_with_retry(fetcher, it["url"])
         print(f"  [{i}/{len(new_items)}] [{it['source']}] {it['title'][:30]}... ({len(it['content'])} 字)")
         time.sleep(REQUEST_INTERVAL)

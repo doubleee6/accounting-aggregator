@@ -213,7 +213,7 @@ function render() {
   });
   count.textContent = '共 ' + rows.length + ' 条';
   if (!rows.length) {
-    const tip = src === '国家税务局' ? '国家税务局数据源尚未接入，敬请期待' : '没有匹配的结果';
+    const tip = '没有匹配的结果';
     list.innerHTML = '<div class="empty">' + tip + '</div>';
     return;
   }
