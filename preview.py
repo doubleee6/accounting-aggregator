@@ -3,6 +3,7 @@
 import json
 import os
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
 DATA = os.path.join("data", "items.json")
 OUT = "index.html"
@@ -55,6 +56,11 @@ def main():
     items.sort(key=lambda x: x.get("date", ""), reverse=True)
     counts = Counter(it.get("source", "") for it in items)
     total = len(items)
+
+    # 数据最新日期 + 最后检查时间（北京时间，UTC+8）
+    valid_dates = sorted({it.get("date") for it in items if it.get("date") and it.get("date") != "未知"})
+    latest_date = valid_dates[-1] if valid_dates else "暂无数据"
+    check_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
 
     data_js = json.dumps(items, ensure_ascii=False)
 
@@ -151,6 +157,12 @@ def main():
   }
   .topbar h1 { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
   .topbar p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .topbar .title { flex: 1; min-width: 0; }
+  .status { flex-shrink: 0; text-align: right; }
+  .status-row { display: flex; align-items: center; gap: 8px; justify-content: flex-end; font-size: 12.5px; line-height: 1.6; }
+  .status-label { color: var(--muted); }
+  .status-val { color: var(--primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; margin-right: 1px; }
 
   /* 顶部官网直达 */
   .quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
@@ -266,6 +278,9 @@ def main():
   .d-card a:hover { color: var(--primary); }
 
   @media (max-width: 720px) {
+    .topbar { flex-wrap: wrap; }
+    .status { width: 100%; text-align: left; }
+    .status-row { justify-content: flex-start; }
     .main { flex-direction: column; }
     .sidebar { width: 100%; position: static; }
     .nav-items-row { display: flex; gap: 6px; overflow-x: auto; }
@@ -279,9 +294,13 @@ def main():
     <div class="logo">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
     </div>
-    <div>
+    <div class="title">
       <h1>会计信息聚合工作台</h1>
       <p>聚合税务 · 注协 · 会计视野的公告与处罚案例</p>
+    </div>
+    <div class="status">
+      <div class="status-row"><span class="status-label">数据更新至</span><span class="status-val">__LATEST__</span></div>
+      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">__CHECK__</span><span class="status-dot"></span></div>
     </div>
   </header>
 
@@ -470,7 +489,10 @@ render();
 </body>
 </html>"""
 
-    html = html.replace("__NAV__", nav_html).replace("__SITES__", sites_html).replace("__DATA__", data_js).replace("__MATCH__", match_js).replace("__DAILY__", daily_js)
+    html = (html.replace("__NAV__", nav_html).replace("__SITES__", sites_html)
+                .replace("__DATA__", data_js).replace("__MATCH__", match_js)
+                .replace("__DAILY__", daily_js)
+                .replace("__LATEST__", latest_date).replace("__CHECK__", check_time))
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"已生成 {OUT}，共 {total} 条数据")
