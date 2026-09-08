@@ -87,20 +87,17 @@ def main():
         print(f"  [{i}/{len(new_items)}] [{it['source']}] {it['title'][:30]}... ({len(it['content'])} 字)")
         time.sleep(REQUEST_INTERVAL)
 
-    # 5. 合并旧数据 + 新数据，落盘
+    # 5. 合并旧数据 + 新数据，落盘（所有源累积保留，按 id 去重只增不删）
     if os.path.exists(OUTPUT):
         with open(OUTPUT, "r", encoding="utf-8") as f:
             old = json.load(f)
     else:
         old = []
-    # 12366 是滚动窗口源：丢弃旧条目（不累积历史），只保留本次抓到的最新 N 条
-    old = [it for it in old if it.get("source") != "12366纳税咨询"]
-    tax_new = [it for it in merged if it.get("source") == "12366纳税咨询"]
-    combined = old + new_items + tax_new
+    combined = old + new_items
     with open(OUTPUT, "w", encoding="utf-8") as f:
         json.dump(combined, f, ensure_ascii=False, indent=2)
 
-    print(f"\n已保存到 {OUTPUT}，累计 {len(combined)} 条（12366滚动 {len(tax_new)} 条）")
+    print(f"\n已保存到 {OUTPUT}，累计 {len(combined)} 条（本次新增 {len(new_items)} 条）")
 
 
 if __name__ == "__main__":

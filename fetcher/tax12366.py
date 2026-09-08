@@ -18,7 +18,7 @@ BASE = "https://12366.chinatax.gov.cn"
 API = f"{BASE}/nszx/onlinemessage/messagelist"
 REFERER = f"{BASE}/nszx/onlinemessage/main"
 PAGE_SIZE = 8  # 服务器固定
-DEFAULT_PAGES = 5  # 滚动窗口：只抓最近 5 页 = 40 条，保持最新
+DEFAULT_PAGES = 30  # 每日扫描最近 30 页 = 240 条候选：新出现条目累积入库（历史保留不删）
 
 
 # 缓存：fetch_list 写入，fetch_detail 读取（list 已含正文，无需二次请求）
