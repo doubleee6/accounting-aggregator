@@ -81,7 +81,7 @@ def main():
     # 左侧分类导航（支持两级：中国会计视野 → CPA业务探讨/内部审计）
     GROUPS = [
         ("财政部", None),
-        ("国家税务局", None),
+        ("12366纳税咨询", None),
         ("中注协", None),
         ("中国会计视野", ["CPA业务探讨", "内部审计"]),
     ]
@@ -355,7 +355,7 @@ function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 function tagFor(source) {
   if (source === '财政部') return '<span class="tag mof">财政部</span>';
   if (source === '中注协') return '<span class="tag cicpa">中注协</span>';
-  if (source === '国家税务局') return '<span class="tag tax">国家税务局</span>';
+  if (source === '12366纳税咨询') return '<span class="tag tax">12366纳税咨询</span>';
   if (source === 'CPA业务探讨') return '<span class="tag cpa">CPA业务探讨</span>';
   if (source === '内部审计') return '<span class="tag audit">内部审计</span>';
   return '<span class="tag esnai">会计视野</span>';

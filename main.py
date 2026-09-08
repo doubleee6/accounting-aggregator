@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-from fetcher import cicpa, chinatax, bbs, mof
+from fetcher import cicpa, tax12366, bbs, mof
 
 DATA_DIR = "data"
 OUTPUT = os.path.join(DATA_DIR, "items.json")
@@ -51,11 +51,13 @@ def main():
             return []
 
     cicpa_list = safe_fetch("中注协", cicpa.fetch_list)
-    tax_list = safe_fetch("国家税务局", chinatax.fetch_list)
+    # tax12366 返回 (items, total) 元组；chinatax 已废弃
+    tax_result = safe_fetch("12366纳税咨询", tax12366.fetch_list)
+    tax_list = tax_result[0] if isinstance(tax_result, tuple) else tax_result
     bbs_list = safe_fetch("论坛", bbs.fetch_list)
     mof_list = safe_fetch("财政部", mof.fetch_list)
     raw = cicpa_list + tax_list + bbs_list + mof_list
-    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，国家税务局 {len(tax_list)} 条，论坛 {len(bbs_list)} 条，财政部 {len(mof_list)} 条")
+    print(f"抓取原始条目：中注协 {len(cicpa_list)} 条，12366纳税咨询 {len(tax_list)} 条，论坛 {len(bbs_list)} 条，财政部 {len(mof_list)} 条")
 
     # 2. 内存去重（URL md5 唯一键）
     seen, merged = set(), []
@@ -69,10 +71,10 @@ def main():
     new_items = [it for it in merged if it["id"] not in existing_ids]
     print(f"去重后 {len(merged)} 条；本次新增 {len(new_items)} 条，已存在 {len(merged) - len(new_items)} 条")
 
-    # 4. 对所有新增条目抓正文（论坛正文需登录，RSS 已含摘要，返回空保留原 content）
+    # 4. 对所有新增条目抓正文（论坛正文需登录，RSS 已含摘要；12366 内容在列表已返回）
     detail_fetchers = {
         "财政部": mof.fetch_detail,
-        "国家税务局": chinatax.fetch_detail,
+        "12366纳税咨询": tax12366.fetch_detail,
         "中注协": cicpa.fetch_detail,
         "内部审计": bbs.fetch_detail,
         "CPA业务探讨": bbs.fetch_detail,
@@ -91,11 +93,14 @@ def main():
             old = json.load(f)
     else:
         old = []
-    combined = old + new_items
+    # 12366 是滚动窗口源：丢弃旧条目（不累积历史），只保留本次抓到的最新 N 条
+    old = [it for it in old if it.get("source") != "12366纳税咨询"]
+    tax_new = [it for it in merged if it.get("source") == "12366纳税咨询"]
+    combined = old + new_items + tax_new
     with open(OUTPUT, "w", encoding="utf-8") as f:
         json.dump(combined, f, ensure_ascii=False, indent=2)
 
-    print(f"\n已保存到 {OUTPUT}，累计 {len(combined)} 条")
+    print(f"\n已保存到 {OUTPUT}，累计 {len(combined)} 条（12366滚动 {len(tax_new)} 条）")
 
 
 if __name__ == "__main__":
