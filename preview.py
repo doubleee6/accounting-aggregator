@@ -361,13 +361,13 @@ function tagFor(source) {
   return '<span class="tag esnai">会计视野</span>';
 }
 
-// 判断日期是否在最近 30 天内（用于「新」高亮）
+// 判断日期是否为今天（北京时间，用于「新」高亮：仅今天更新的标新）
 function isRecent(d) {
   if (!d) return false;
-  const t = new Date(d + 'T00:00:00');
-  if (isNaN(t)) return false;
-  const diff = (Date.now() - t.getTime()) / 86400000;
-  return diff >= 0 && diff <= 30;
+  const bj = new Date(Date.now() + 8 * 3600000); // 北京时间 UTC+8
+  const pad = n => String(n).padStart(2, '0');
+  const today = bj.getUTCFullYear() + '-' + pad(bj.getUTCMonth() + 1) + '-' + pad(bj.getUTCDate());
+  return d === today;
 }
 
 // 日期相对标签（今天 / 昨天 / 具体日期）
