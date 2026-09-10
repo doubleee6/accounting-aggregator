@@ -69,7 +69,8 @@ def fetch_list(max_pages=None):
             code = it.get("code") or it.get("id") or ""
             if not code:
                 continue
-            url = f"{BASE}/nszx/onlinemessage/detail?code={code}"
+            # 注意：官网详情页参数是 id 而不是 code（code 传入时服务端只返回空壳页面）
+            url = f"{BASE}/nszx/onlinemessage/detail?id={code}"
             content = (it.get("content") or "").strip()
             items.append({
                 "source": "12366纳税咨询",
