@@ -1,9 +1,11 @@
 name: daily-update
 
 on:
-  # 每天 UTC 00:30 = 北京时间 08:30 自动抓取
+  # 每天抓两次（UTC 00:30 / 09:00 = 北京时间 08:30 / 17:00），
+  # 避免当天下午/晚上发布的帖子要等到次日才入库
   schedule:
     - cron: "30 0 * * *"
+    - cron: "0 9 * * *"
   # 手动触发入口（Action 页面右上角 Run workflow）
   workflow_dispatch: {}
   # 任意 push 触发（便于首次验证 workflow 是否被注册）
