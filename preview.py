@@ -277,6 +277,55 @@ def main():
   .d-card a { color: var(--text); text-decoration: none; flex: 1; min-width: 0; }
   .d-card a:hover { color: var(--primary); }
 
+  /* 站内阅读浮层 */
+  .reader-mask {
+    display: none; position: fixed; inset: 0; background: rgba(16,24,40,.42);
+    z-index: 100; padding: 28px 16px; backdrop-filter: blur(2px);
+  }
+  .reader-mask.open { display: flex; align-items: flex-start; justify-content: center; }
+  .reader {
+    background: var(--card); border-radius: 16px; width: 100%; max-width: 760px;
+    max-height: calc(100vh - 56px); display: flex; flex-direction: column;
+    box-shadow: 0 20px 48px rgba(16,24,40,.22); overflow: hidden;
+  }
+  .reader-head {
+    display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
+  }
+  .reader-meta { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+  .reader-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .btn-src {
+    display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 8px;
+    font-size: 12.5px; text-decoration: none; background: var(--primary-soft);
+    color: var(--primary); border: 1px solid #cfe8e2; transition: all .15s; font-weight: 500;
+  }
+  .btn-src:hover { background: #d8ece7; }
+  .btn-close {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
+    background: #fff; color: var(--muted); font-size: 14px; cursor: pointer; line-height: 1;
+  }
+  .btn-close:hover { background: #f2f4f7; color: var(--text); }
+  .reader-title { font-size: 19px; font-weight: 600; line-height: 1.5; padding: 16px 22px 0; }
+  .reader-body { padding: 12px 22px 24px; overflow-y: auto; flex: 1; }
+  .reader-text { font-size: 15px; line-height: 1.85; color: #2b3038; white-space: pre-wrap; word-break: break-word; }
+  .reader-note {
+    font-size: 13px; color: var(--tax); background: var(--tax-bg); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 14px; line-height: 1.6;
+  }
+  .card h2 a { cursor: pointer; }
+  .card .meta .src-link {
+    margin-left: auto; font-size: 12px; color: var(--muted); text-decoration: none;
+    border-bottom: 1px dashed #cfd4dc; flex-shrink: 0;
+  }
+  .card .meta .src-link:hover { color: var(--primary); border-color: var(--primary); }
+  .d-card a { cursor: pointer; }
+  @media (max-width: 720px) {
+    .reader-mask { padding: 0; }
+    .reader { max-width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; }
+    .reader-body { padding: 12px 16px 24px; }
+    .reader-title { padding: 14px 16px 0; font-size: 17px; }
+  }
+
   @media (max-width: 720px) {
     .topbar { flex-wrap: wrap; }
     .status { width: 100%; text-align: left; }
@@ -340,6 +389,21 @@ __NAV__
     <div class="daily-board" id="dailyBoard"></div>
   </div>
 </div>
+
+<!-- 站内阅读浮层 -->
+<div class="reader-mask" id="readerMask" onclick="closeReader()">
+  <div class="reader" onclick="event.stopPropagation()">
+    <div class="reader-head">
+      <div class="reader-meta" id="readerMeta"></div>
+      <div class="reader-actions">
+        <a class="btn-src" id="readerSrc" href="#" target="_blank" rel="noopener">官网原文 ↗</a>
+        <button class="btn-close" onclick="closeReader()" title="关闭 (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="reader-title" id="readerTitle"></div>
+    <div class="reader-body" id="readerBody"></div>
+  </div>
+</div>
 <script>
 const DATA = __DATA__;
 const MATCH = __MATCH__;
@@ -360,6 +424,55 @@ function tagFor(source) {
   if (source === '内部审计') return '<span class="tag audit">内部审计</span>';
   return '<span class="tag esnai">会计视野</span>';
 }
+
+// 论坛类来源：正文需登录，站内仅展示 RSS 摘要
+const SUMMARY_ONLY = {'CPA业务探讨': 1, '内部审计': 1};
+
+const readerMask = document.getElementById('readerMask');
+const readerMeta = document.getElementById('readerMeta');
+const readerTitle = document.getElementById('readerTitle');
+const readerBody = document.getElementById('readerBody');
+const readerSrc = document.getElementById('readerSrc');
+
+// 站内阅读：直接在当前页打开正文，不再跳转官网
+function openReader(id) {
+  const it = DATA.find(x => x.id === id);
+  if (!it) return;
+  const c = (it.content || '').trim();
+  let body = '';
+  if (!c) {
+    body = '<div class="reader-note">本条正文未抓取到（源站结构或访问限制），请点击右上角「官网原文」查看。</div>';
+  } else if (SUMMARY_ONLY[it.source]) {
+    body = '<div class="reader-note">该来源为论坛帖，完整正文需登录论坛才可见。以下为 RSS 摘要，完整内容请点击右上角「官网原文」。</div>' +
+           '<div class="reader-text">' + esc(c) + '</div>';
+  } else {
+    body = '<div class="reader-text">' + esc(c) + '</div>';
+  }
+  readerMeta.innerHTML = tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span>' +
+    (isRecent(it.date) ? '<span class="badge-new">新</span>' : '');
+  readerTitle.textContent = it.title || '(无标题)';
+  readerBody.innerHTML = body;
+  readerBody.scrollTop = 0;
+  readerSrc.href = it.url || '#';
+  readerMask.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  history.replaceState(null, '', '#item=' + id);
+}
+
+function closeReader() {
+  readerMask.classList.remove('open');
+  document.body.style.overflow = '';
+  history.replaceState(null, '', location.pathname + location.search);
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReader(); });
+// 支持用 #item=<id> 直接分享/刷新后仍打开同一篇（脚本位于页面末尾，DOM 已就绪）
+function openFromHash() {
+  const m = location.hash.match(/^#item=(.+)$/);
+  if (m && DATA.some(x => x.id === m[1])) openReader(m[1]);
+}
+openFromHash();
+window.addEventListener('hashchange', openFromHash);
 
 // 判断日期是否为今天（北京时间，用于「新」高亮：仅今天更新的标新）
 function isRecent(d) {
@@ -395,7 +508,7 @@ function buildDay(d, items, open) {
   const srcBlocks = Object.keys(bySrc).map(src => {
     const cards = bySrc[src].map(it =>
       '<div class="d-card">' + tagFor(it.source) +
-      '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a></div>'
+      '<a onclick="openReader(\\'' + it.id + '\\')">' + esc(it.title) + '</a></div>'
     ).join('');
     return '<div class="d-src"><div class="d-src-name">' + esc(src) + ' · ' + bySrc[src].length + ' 条</div>' + cards + '</div>';
   }).join('');
@@ -447,8 +560,9 @@ function render() {
     const newClass = isNew ? ' new' : '';
     const newBadge = isNew ? '<span class="badge-new">新</span>' : '';
     return '<div class="card' + newClass + '">' +
-      '<div class="meta">' + tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span>' + newBadge + '</div>' +
-      '<h2><a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a></h2>' +
+      '<div class="meta">' + tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span>' + newBadge +
+        '<a class="src-link" href="' + esc(it.url) + '" target="_blank" rel="noopener">官网原文 ↗</a></div>' +
+      '<h2><a onclick="openReader(\\'' + it.id + '\\')">' + esc(it.title) + '</a></h2>' +
       (sum ? '<div class="sum">' + esc(sum) + '…</div>' : '<div class="sum">（正文待抓取）</div>') +
       '</div>';
   }).join('');
