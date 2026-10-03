@@ -6,7 +6,9 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 DATA = os.path.join("data", "items.json")
+IDX_DIR = os.path.join("data", "idx")        # 前端使用的分片索引（由 build_site.py 生成）
 OUT = "index.html"
+SRC_NAMES = ["12366纳税咨询", "CPA业务探讨", "内部审计", "财政部", "中注协"]
 
 # 顶部官网直达入口
 OFFICIAL_SITES = [
@@ -48,10 +50,29 @@ def summarize_day(items):
     return " · ".join(parts)
 
 
-def main():
-    with open(DATA, "r", encoding="utf-8") as f:
-        items = json.load(f)
+def load_items():
+    """读取 build_site.py 生成的各来源索引分片；缺失时回退到 items.json。"""
+    items = []
+    skip = {"manifest.json", "recent.json"}
+    if os.path.isdir(IDX_DIR):
+        for name in sorted(os.listdir(IDX_DIR)):
+            if not name.endswith(".json") or name in skip:
+                continue
+            with open(os.path.join(IDX_DIR, name), "r", encoding="utf-8") as f:
+                for r in json.load(f):
+                    items.append({
+                        "id": r[0], "si": r[1],
+                        "source": SRC_NAMES[r[1]] if 0 <= r[1] < len(SRC_NAMES) else "",
+                        "date": r[2], "title": r[3], "url": r[4],
+                    })
+    if not items and os.path.exists(DATA):
+        with open(DATA, "r", encoding="utf-8") as f:
+            items = json.load(f)
+    return items
 
+
+def main():
+    items = load_items()
     items = [it for it in items if it.get("title")]
     items.sort(key=lambda x: x.get("date", ""), reverse=True)
     counts = Counter(it.get("source", "") for it in items)
@@ -62,7 +83,7 @@ def main():
     latest_date = valid_dates[-1] if valid_dates else "暂无数据"
     check_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
 
-    data_js = json.dumps(items, ensure_ascii=False)
+    # 数据不再内嵌页面，改为前端异步加载 data/index.json（支撑十万级条目）
 
     # 每日摘要：最近 14 天每天一组，更早的合并为「更早」
     by_day = {}
@@ -127,6 +148,7 @@ def main():
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>会计信息聚合工作台</title>
+<link rel="icon" href="data:,">
 <style>
   :root {
     --bg: #f4f5f7; --card: #ffffff; --text: #1a1d21; --muted: #8a919f;
@@ -319,6 +341,15 @@ def main():
   }
   .card .meta .src-link:hover { color: var(--primary); border-color: var(--primary); }
   .d-card a { cursor: pointer; }
+  /* 「加载全部」按钮：首屏只加载最近一批，点此拉取全量索引 */
+  .load-all-wrap { display: flex; justify-content: center; padding: 22px 0 6px; }
+  .load-all-btn {
+    padding: 10px 22px; border-radius: 999px; cursor: pointer; font-size: 13.5px;
+    background: var(--card); color: var(--primary); border: 1px solid var(--primary);
+    box-shadow: var(--shadow-sm); transition: all .15s;
+  }
+  .load-all-btn:hover { background: var(--primary-soft); }
+  .load-all-btn:disabled { opacity: .6; cursor: default; }
   @media (max-width: 720px) {
     .reader-mask { padding: 0; }
     .reader { max-width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; }
@@ -345,7 +376,7 @@ def main():
     </div>
     <div class="title">
       <h1>会计信息聚合工作台</h1>
-      <p>聚合税务 · 注协 · 会计视野的公告与处罚案例</p>
+      <p>聚合税务总局 12366 问答 · 中注协 · 中国会计视野论坛 · 财政部，共 __TOTAL__ 条</p>
     </div>
     <div class="status">
       <div class="status-row"><span class="status-label">数据更新至</span><span class="status-val">__LATEST__</span></div>
@@ -365,7 +396,7 @@ __SITES__
   <div id="view-browse">
   <div class="searchbar">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input type="search" id="q" placeholder="搜索标题或正文关键词，如：增值税 / 公开谴责 / 函证">
+    <input type="search" id="q" placeholder="搜索标题关键词，如：增值税 / 公开谴责 / 函证">
   </div>
 
   <div class="main">
@@ -405,7 +436,6 @@ __NAV__
   </div>
 </div>
 <script>
-const DATA = __DATA__;
 const MATCH = __MATCH__;
 const DAILY = __DAILY__;
 const list = document.getElementById('list');
@@ -413,20 +443,116 @@ const count = document.getElementById('count');
 const dailyBoard = document.getElementById('dailyBoard');
 let src = 'all';
 let kw = '';
+let DATA = [];        // 全量索引（异步加载）
+let filtered = [];    // 当前筛选结果
+let shown = 0;        // 已渲染条数
+const PAGE = 60;      // 每批渲染条数
+
+// 来源顺序（必须与 build_site.py 的 SOURCES/DIRNAME 一致）
+const SRC_NAMES = ['12366纳税咨询', 'CPA业务探讨', '内部审计', '财政部', '中注协'];
+const SRC_DIR   = ['tax12366', 'bbs_cpa', 'bbs_audit', 'mof', 'cicpa'];
+const bodyCache = {};  // 正文分片缓存
 
 function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-function tagFor(source) {
-  if (source === '财政部') return '<span class="tag mof">财政部</span>';
-  if (source === '中注协') return '<span class="tag cicpa">中注协</span>';
-  if (source === '12366纳税咨询') return '<span class="tag tax">12366纳税咨询</span>';
-  if (source === 'CPA业务探讨') return '<span class="tag cpa">CPA业务探讨</span>';
-  if (source === '内部审计') return '<span class="tag audit">内部审计</span>';
+function tagFor(si) {
+  const n = SRC_NAMES[si];
+  if (n === '财政部') return '<span class="tag mof">财政部</span>';
+  if (n === '中注协') return '<span class="tag cicpa">中注协</span>';
+  if (n === '12366纳税咨询') return '<span class="tag tax">12366纳税咨询</span>';
+  if (n === 'CPA业务探讨') return '<span class="tag cpa">CPA业务探讨</span>';
+  if (n === '内部审计') return '<span class="tag audit">内部审计</span>';
   return '<span class="tag esnai">会计视野</span>';
 }
 
-// 论坛类来源：正文需登录，站内仅展示 RSS 摘要
+// 论坛类来源：正文需登录态抓取，未收录时给出提示
 const SUMMARY_ONLY = {'CPA业务探讨': 1, '内部审计': 1};
+
+// —— 索引按来源分片，按需加载（支撑十万级条目）——
+const BUILD = String(Date.now());        // 版本号，避免浏览器缓存旧分片
+const TOTAL = __TOTAL__;                 // 索引总条数（构建时写入）
+const loadedDirs = new Set();            // 已加载的来源分片
+let allLoaded = false;
+
+function rowToObj(r) { return { id: r[0], si: r[1], date: r[2], title: r[3], url: r[4] }; }
+
+async function fetchIdx(name) {
+  try {
+    const r = await fetch('data/idx/' + name + '?v=' + BUILD);
+    return r.ok ? await r.json() : [];
+  } catch (e) { return []; }
+}
+
+// 把新行并入 DATA（按 id 去重），保持日期倒序
+function absorb(rows) {
+  const have = new Set(DATA.map(x => x.id));
+  let added = 0;
+  for (const r of rows) {
+    if (have.has(r[0])) continue;
+    DATA.push(rowToObj(r)); added++;
+  }
+  if (added) DATA.sort((a, b) => (a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)));
+  return added;
+}
+
+// 载入某个来源的完整索引分片
+async function ensureSource(si) {
+  const dir = SRC_DIR[si];
+  if (!dir || loadedDirs.has(dir)) return;
+  loadedDirs.add(dir);
+  absorb(await fetchIdx(dir + '.json'));
+}
+
+// 载入全部来源（“加载全部”与搜索时使用）
+async function ensureAll() {
+  if (allLoaded) return;
+  for (let i = 0; i < SRC_NAMES.length; i++) await ensureSource(i);
+  allLoaded = true;
+}
+
+function updateLoadAllBtn() {
+  const b = document.getElementById('loadAll');
+  if (!b) return;
+  b.textContent = '当前仅加载最近 ' + DATA.length.toLocaleString() +
+    ' 条 · 点击加载全部 ' + TOTAL.toLocaleString() + ' 条';
+}
+
+// 首屏：只拉 recent.json（跨来源最新 2000 条），几十 KB 即可渲染
+let bodyMeta = {};   // dir -> [月份]（避免请求不存在的正文分片，减少 404）
+async function loadBodyMeta() {
+  try {
+    const r = await fetch('data/body/_meta.json?v=' + BUILD);
+    if (r.ok) bodyMeta = await r.json();
+  } catch (e) { bodyMeta = {}; }
+}
+
+async function init() {
+  const [rows] = await Promise.all([fetchIdx('recent.json'), loadBodyMeta()]);
+  DATA = rows.map(rowToObj);
+  render();
+  renderDaily();
+  openFromHash();
+}
+
+// 取正文：按「来源+月份」定位分片，懒加载并缓存
+async function getBody(it) {
+  const dir = SRC_DIR[it.si];
+  if (!dir) return '';
+  const month = (it.date || '0000').slice(0, 7);
+  const key = dir + '/' + month;
+  if (bodyCache[key] === undefined) {
+    const months = bodyMeta[dir];
+    if (months && months.indexOf(month) === -1) {   // 该月没有正文分片，直接跳过
+      bodyCache[key] = {};
+      return '';
+    }
+    try {
+      const r = await fetch('data/body/' + key + '.json');
+      bodyCache[key] = r.ok ? await r.json() : {};
+    } catch (e) { bodyCache[key] = {}; }
+  }
+  return bodyCache[key][it.id] || '';
+}
 
 const readerMask = document.getElementById('readerMask');
 const readerMeta = document.getElementById('readerMeta');
@@ -434,29 +560,36 @@ const readerTitle = document.getElementById('readerTitle');
 const readerBody = document.getElementById('readerBody');
 const readerSrc = document.getElementById('readerSrc');
 
-// 站内阅读：直接在当前页打开正文，不再跳转官网
-function openReader(id) {
+// 站内阅读：直接在当前页打开正文，正文按需拉取分片
+async function openReader(id) {
   const it = DATA.find(x => x.id === id);
   if (!it) return;
-  const c = (it.content || '').trim();
-  let body = '';
-  if (!c) {
-    body = '<div class="reader-note">本条正文未抓取到（源站结构或访问限制），请点击右上角「官网原文」查看。</div>';
-  } else if (SUMMARY_ONLY[it.source]) {
-    body = '<div class="reader-note">该来源为论坛帖，完整正文需登录论坛才可见。以下为 RSS 摘要，完整内容请点击右上角「官网原文」。</div>' +
-           '<div class="reader-text">' + esc(c) + '</div>';
-  } else {
-    body = '<div class="reader-text">' + esc(c) + '</div>';
-  }
-  readerMeta.innerHTML = tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span>' +
+  readerMeta.innerHTML = tagFor(it.si) + '<span>' + esc(it.date || '日期未知') + '</span>' +
     (isRecent(it.date) ? '<span class="badge-new">新</span>' : '');
   readerTitle.textContent = it.title || '(无标题)';
-  readerBody.innerHTML = body;
+  readerBody.innerHTML = '<div class="empty">正文加载中…</div>';
   readerBody.scrollTop = 0;
   readerSrc.href = it.url || '#';
   readerMask.classList.add('open');
   document.body.style.overflow = 'hidden';
   history.replaceState(null, '', '#item=' + id);
+
+  const c = (await getBody(it)).trim();
+  const isForum = !!SUMMARY_ONLY[SRC_NAMES[it.si]];
+  if (!c) {
+    const note = isForum
+      ? '该帖正文需登录论坛才可见，暂未收录。可点击右上角「官网原文」查看完整内容。'
+      : '本条正文未抓取到，请点击右上角「官网原文」查看。';
+    readerBody.innerHTML = '<div class="reader-note">' + note + '</div>';
+  } else if (isForum) {
+    readerBody.innerHTML =
+      '<div class="reader-note">论坛帖完整正文需登录才可见，以下为 RSS 摘要（' + c.length +
+      ' 字）。完整内容请点右上角「官网原文」。</div>' +
+      '<div class="reader-text">' + esc(c) + '</div>';
+  } else {
+    readerBody.innerHTML = '<div class="reader-text">' + esc(c) + '</div>';
+  }
+  readerBody.scrollTop = 0;
 }
 
 function closeReader() {
@@ -467,11 +600,12 @@ function closeReader() {
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReader(); });
 // 支持用 #item=<id> 直接分享/刷新后仍打开同一篇（脚本位于页面末尾，DOM 已就绪）
-function openFromHash() {
+async function openFromHash() {
   const m = location.hash.match(/^#item=(.+)$/);
-  if (m && DATA.some(x => x.id === m[1])) openReader(m[1]);
+  if (!m || !DATA.length) return;              // 首屏索引未就绪时忽略
+  if (!DATA.some(x => x.id === m[1])) await ensureAll();   // 可能是未加载的旧条目
+  openReader(m[1]);
 }
-openFromHash();
 window.addEventListener('hashchange', openFromHash);
 
 // 判断日期是否为今天（北京时间，用于「新」高亮：仅今天更新的标新）
@@ -504,10 +638,10 @@ function toggleDay(head) {
 function buildDay(d, items, open) {
   const summary = DAILY[d] || '';
   const bySrc = {};
-  items.forEach(it => { (bySrc[it.source] = bySrc[it.source] || []).push(it); });
+  items.forEach(it => { const k = SRC_NAMES[it.si]; (bySrc[k] = bySrc[k] || []).push(it); });
   const srcBlocks = Object.keys(bySrc).map(src => {
     const cards = bySrc[src].map(it =>
-      '<div class="d-card">' + tagFor(it.source) +
+      '<div class="d-card">' + tagFor(it.si) +
       '<a onclick="openReader(\\'' + it.id + '\\')">' + esc(it.title) + '</a></div>'
     ).join('');
     return '<div class="d-src"><div class="d-src-name">' + esc(src) + ' · ' + bySrc[src].length + ' 条</div>' + cards + '</div>';
@@ -535,41 +669,86 @@ function renderDaily() {
   const oldDays = days.slice(14);
   let blocks = recentDays.map((d, i) => buildDay(d, groups[d], i < 2)).join('');
   if (oldDays.length) {
-    const oldItems = oldDays.reduce((a, d) => a.concat(groups[d]), []);
-    blocks += buildDay('更早', oldItems, false);
+    const oa = [];
+    for (const d of oldDays) for (const it of groups[d]) oa.push(it);
+    blocks += buildDay('更早', oa.slice(0, 400), false);   // 上限 400 条，避免一次插入过多 DOM
   }
   dailyBoard.innerHTML = blocks;
 }
 
-function render() {
-  const q = kw.toLowerCase();
-  const rows = DATA.filter(it => {
-    if (src !== 'all' && !(MATCH[src] || []).includes(it.source)) return false;
-    if (q && !(it.title + ' ' + (it.content || '')).toLowerCase().includes(q)) return false;
-    return true;
-  });
-  count.textContent = '共 ' + rows.length + ' 条';
-  if (!rows.length) {
-    const tip = '没有匹配的结果';
-    list.innerHTML = '<div class="empty">' + tip + '</div>';
-    return;
-  }
-  list.innerHTML = rows.map(it => {
-    const sum = (it.content || '').slice(0, 140).replace(/\\n/g, ' ');
-    const isNew = isRecent(it.date);
-    const newClass = isNew ? ' new' : '';
-    const newBadge = isNew ? '<span class="badge-new">新</span>' : '';
-    return '<div class="card' + newClass + '">' +
-      '<div class="meta">' + tagFor(it.source) + '<span>' + esc(it.date || '日期未知') + '</span>' + newBadge +
-        '<a class="src-link" href="' + esc(it.url) + '" target="_blank" rel="noopener">官网原文 ↗</a></div>' +
-      '<h2><a onclick="openReader(\\'' + it.id + '\\')">' + esc(it.title) + '</a></h2>' +
-      (sum ? '<div class="sum">' + esc(sum) + '…</div>' : '<div class="sum">（正文待抓取）</div>') +
-      '</div>';
-  }).join('');
+function cardHtml(it) {
+  const isNew = isRecent(it.date);
+  return '<div class="card' + (isNew ? ' new' : '') + '">' +
+    '<div class="meta">' + tagFor(it.si) + '<span>' + esc(it.date || '日期未知') + '</span>' +
+      (isNew ? '<span class="badge-new">新</span>' : '') +
+      '<a class="src-link" href="' + esc(it.url) + '" target="_blank" rel="noopener">官网原文 ↗</a></div>' +
+    '<h2><a onclick="openReader(\\'' + it.id + '\\')">' + esc(it.title) + '</a></h2>' +
+    '</div>';
 }
 
-document.getElementById('q').addEventListener('input', e => { kw = e.target.value.trim(); render(); });
-document.getElementById('sidebar').addEventListener('click', e => {
+function render() {
+  const q = kw.toLowerCase();
+  filtered = DATA.filter(it => {
+    if (src !== 'all' && !(MATCH[src] || []).includes(SRC_NAMES[it.si])) return false;
+    if (q && !(it.title || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const partial = !allLoaded;
+  count.textContent = '共 ' + filtered.length.toLocaleString() + ' 条' + (partial ? '（已加载部分）' : '');
+  shown = 0;
+  list.innerHTML = '';
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty">没有匹配的结果</div>';
+  } else {
+    appendMore();
+  }
+  if (partial) {
+    list.insertAdjacentHTML('beforeend',
+      '<div class="load-all-wrap"><button id="loadAll" class="load-all-btn"></button></div>');
+    updateLoadAllBtn();
+  }
+}
+
+// 点击「加载全部」：拉完所有来源分片后重新渲染
+list.addEventListener('click', async e => {
+  if (e.target.id !== 'loadAll') return;
+  e.target.disabled = true;
+  e.target.textContent = '正在加载全部索引…';
+  await ensureAll();
+  renderDaily();
+  render();
+});
+
+// 分批渲染，避免一次插入过多 DOM 造成卡顿
+function appendMore() {
+  const next = filtered.slice(shown, shown + PAGE);
+  if (!next.length) return;
+  const s = document.getElementById('moreSentinel');
+  if (s) s.remove();
+  list.insertAdjacentHTML('beforeend', next.map(cardHtml).join(''));
+  shown += next.length;
+  if (shown < filtered.length) {
+    list.insertAdjacentHTML('beforeend', '<div id="moreSentinel" class="empty" style="padding:16px 0">向下滚动加载更多…</div>');
+  }
+}
+
+// 滚动到底部自动加载下一批
+window.addEventListener('scroll', () => {
+  if (shown < filtered.length && window.innerHeight + window.scrollY >= document.body.offsetHeight - 400) {
+    appendMore();
+  }
+});
+
+document.getElementById('q').addEventListener('input', async e => {
+  kw = e.target.value.trim();
+  if (kw && !allLoaded) {                       // 搜索需要全量索引，首次搜索时补齐
+    count.textContent = '正在加载全部索引以搜索…';
+    await ensureAll();
+    renderDaily();
+  }
+  render();
+});
+document.getElementById('sidebar').addEventListener('click', async e => {
   const item = e.target.closest('.nav-item');
   if (!item) return;
   // 父级点击：切换子分类展开/收起
@@ -583,6 +762,14 @@ document.getElementById('sidebar').addEventListener('click', e => {
   document.querySelectorAll('.nav-item').forEach(c => c.classList.remove('active'));
   item.classList.add('active');
   src = item.dataset.src;
+  // 该分类涉及的来源若尚未加载，先加载（避免只看到首屏那部分）
+  const need = (MATCH[src] || []).filter(n => !loadedDirs.has(SRC_DIR[SRC_NAMES.indexOf(n)]));
+  if (need.length) {
+    count.textContent = '加载中…';
+    list.innerHTML = '<div class="empty">正在加载「' + need.join('、') + '」…</div>';
+    for (const n of (MATCH[src] || [])) await ensureSource(SRC_NAMES.indexOf(n));
+    renderDaily();
+  }
   render();
 });
 
@@ -598,14 +785,15 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
-render();
+init();
 </script>
 </body>
 </html>"""
 
     html = (html.replace("__NAV__", nav_html).replace("__SITES__", sites_html)
-                .replace("__DATA__", data_js).replace("__MATCH__", match_js)
+                .replace("__MATCH__", match_js)
                 .replace("__DAILY__", daily_js)
+                .replace("__TOTAL__", str(total))
                 .replace("__LATEST__", latest_date).replace("__CHECK__", check_time))
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
