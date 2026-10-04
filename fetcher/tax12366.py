@@ -4,10 +4,12 @@
 API: GET /nszx/onlinemessage/messagelist?currentPage=N&pageSize=8
 - pageSize 被服务器固定为 8，无论传多少
 - 返回 JSON：maxCount（总留言数）、maxPage（总页数）、pageSet（当页条目）
-- 字段：code(唯一id)、title(类别)、content(完整留言+答复)、
+- 字段：code(唯一id)、title(类别)、content(仅「问题」，答复需抓详情页)、
         unitname(纳税人所属地)、fbsj(发布日期, YYYY-MM-DD)
-- 单条 API 不存在，content 已在 list 接口返回
+- 详情页 detail?id=<code> 含「问题内容/答复内容/答复机构/答复时间」四段（见 fetch_detail）
 """
+import html
+import re
 import time
 
 import requests
@@ -85,6 +87,56 @@ def fetch_list(max_pages=None):
     return items, total
 
 
+def _field(block, label):
+    """从 <th>label</th> 所在行取 textarea 内容或 input 的 value。"""
+    i = block.find(label + "</th>")
+    if i < 0:
+        return ""
+    j = block.find("</tr>", i)
+    seg = block[i:j] if j > i else block[i:i + 4000]
+    m = re.search(r"<textarea[^>]*>(.*?)</textarea>", seg, re.S)
+    if m:
+        return html.unescape(m.group(1)).strip()
+    m = re.search(r'value="([^"]*)"', seg)
+    if m:
+        return html.unescape(m.group(1)).strip()
+    return ""
+
+
 def fetch_detail(url):
-    """返回留言完整内容（已在 fetch_list 缓存，无缓存时返回空串）。"""
+    """抓详情页，返回「问题 + 答复 + 答复机构/时间」的完整问答正文。
+
+    列表接口只提供「问题」，答复仅在详情页，因此新增条目需调用本函数。
+    失败时退回列表缓存内容（仅有问题），保证不产生空正文。
+    """
+    last = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=_headers(), timeout=25)
+            if r.status_code == 200 and "答复内容" in r.text:
+                h = r.text
+                q = _field(h, "问题内容")
+                a = _field(h, "答复内容")
+                org = _field(h, "答复机构")
+                date = _field(h, "答复时间")
+                parts = []
+                if q:
+                    parts.append("【问题】\n" + q)
+                if a:
+                    parts.append("【答复】\n" + a)
+                meta = []
+                if org:
+                    meta.append("答复机构：" + org)
+                if date:
+                    meta.append("答复时间：" + date)
+                if meta:
+                    parts.append("　".join(meta))
+                if parts:
+                    return "\n\n".join(parts)
+            last = f"HTTP {r.status_code}"
+        except Exception as e:
+            last = type(e).__name__
+        time.sleep(1.5 * (attempt + 1))
+    if last:
+        print(f"  12366 详情抓取失败: {url} -> {last}")
     return _CONTENT_CACHE.get(url, "")

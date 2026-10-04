@@ -29,6 +29,8 @@ RAW_GLOBS = [
     "data/raw/bbs_audit.json",
     "data/raw/bbs_cpa.json",
 ]
+# 12366 详情补充：{id: {q, a, org, date}}，列表接口只给「问题」，答复在详情页
+TAX_DETAIL = "data/raw/tax12366_detail.json"
 IDX_DIR = "data/idx"
 BODY_DIR = "data/body"
 RECENT_N = 2000          # 首屏默认视图条数（跨来源，按日期倒序）
@@ -80,15 +82,60 @@ def load_all():
         old = store.get(i)
         if old is None:
             store[i] = it
-        else:
-            old.update({k: v for k, v in it.items() if v not in (None, "")})
+            continue
+        for k, v in it.items():
+            if v in (None, ""):
+                continue
+            if k == "content":
+                oc = old.get("content") or ""
+                # 保护已合并的完整问答：12366 列表重抓只含「问题」，
+                # 不能让它覆盖已有的「问题+答复」正文
+                if "【答复】" in oc and "【答复】" not in v:
+                    continue
+                if "【答复】" not in v and len(oc) > len(v):
+                    continue
+            old[k] = v
     return list(store.values())
+
+
+def apply_tax_detail(items):
+    """把 12366 详情页补抓的「问题+答复」合并成完整问答正文。"""
+    if not os.path.exists(TAX_DETAIL):
+        return 0
+    det = json.load(open(TAX_DETAIL, encoding="utf-8"))
+    n = 0
+    for it in items:
+        if it.get("source") != "12366纳税咨询":
+            continue
+        d = det.get(it["id"])
+        if not d:
+            continue
+        q = (d.get("q") or "").strip() or (it.get("content") or "").strip()
+        a = (d.get("a") or "").strip()
+        parts = []
+        if q:
+            parts.append("【问题】\n" + q)
+        if a:
+            parts.append("【答复】\n" + a)
+        meta = []
+        if d.get("org"):
+            meta.append("答复机构：" + d["org"])
+        if d.get("date"):
+            meta.append("答复时间：" + d["date"])
+        if meta:
+            parts.append("　".join(meta))
+        if parts:
+            it["content"] = "\n\n".join(parts)
+            n += 1
+    return n
 
 
 def main():
     items = load_all()
     items = [it for it in items if it.get("title")]
     items.sort(key=lambda x: x.get("date", ""), reverse=True)
+    merged = apply_tax_detail(items)
+    print(f"合并 12366 问答详情 {merged} 条")
 
     os.makedirs(IDX_DIR, exist_ok=True)
     by_dir = defaultdict(list)          # dir -> [row, ...]（已按日期倒序）
