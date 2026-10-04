@@ -5,7 +5,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from .common import get, make_id
+from .common import get, make_id, html_to_text
 
 BASE = "https://www.cicpa.org.cn"
 LIST_URL = "https://www.cicpa.org.cn/xxcx/kjsswszyzljc"
@@ -44,8 +44,10 @@ def fetch_list():
 
 
 def fetch_detail(url):
-    """抓取正文，优先 TRS_Editor，回退 content。"""
+    """抓取正文，优先 TRS_Editor，回退 content（按段落提取，段内不硬换行）。"""
     html, _ = get(url)
     soup = BeautifulSoup(html, "lxml")
     node = soup.select_one("div.TRS_Editor") or soup.select_one("div.content")
-    return node.get_text("\n", strip=True) if node else ""
+    if not node:
+        return ""
+    return html_to_text(node)

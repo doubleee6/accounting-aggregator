@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from .common import get, make_id
+from .common import get, make_id, html_to_text
 
 BASE = "https://www.mof.gov.cn/gp/xxgkml/jdjcj/"
 
@@ -80,8 +80,12 @@ def fetch_list():
 
 
 def fetch_detail(url):
-    """抓取正文：div.sqxzbList2。"""
+    """抓取正文：div.sqxzbList2（按段落提取，段内不硬换行）。"""
     html, _ = get(url)
     soup = BeautifulSoup(html, "lxml")
     node = soup.select_one("div.sqxzbList2")
-    return node.get_text("\n", strip=True) if node else ""
+    if not node:
+        return ""
+    h = node.find(["h1", "h2", "h3", "h4", "h5"])
+    title = h.get_text() if h else None
+    return html_to_text(node, skip_first_if=title)

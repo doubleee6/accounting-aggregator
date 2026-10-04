@@ -88,11 +88,11 @@ def load_all():
                 continue
             if k == "content":
                 oc = old.get("content") or ""
-                # 保护已合并的完整问答：12366 列表重抓只含「问题」，
-                # 不能让它覆盖已有的「问题+答复」正文
-                if "【答复】" in oc and "【答复】" not in v:
-                    continue
-                if "【答复】" not in v and len(oc) > len(v):
+                # 唯一需要保护的场景：12366 每日重抓列表只含「问题」，
+                # 不能让它覆盖已由详情页补抓的「问题+答复」完整问答。
+                # 其它来源的正文以本次抓取为准（排版修复后会更干净）。
+                if (it.get("source") == "12366纳税咨询"
+                        and "【答复】" in oc and "【答复】" not in v):
                     continue
             old[k] = v
     return list(store.values())
