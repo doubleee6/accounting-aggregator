@@ -521,7 +521,7 @@ function updateLoadAllBtn() {
 let bodyMeta = {};   // dir -> [月份]（避免请求不存在的正文分片，减少 404）
 async function loadBodyMeta() {
   try {
-    const r = await fetch('data/body/_meta.json?v=' + BUILD);
+    const r = await fetch('data/body/months.json?v=' + BUILD);
     if (r.ok) bodyMeta = await r.json();
   } catch (e) { bodyMeta = {}; }
 }

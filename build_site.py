@@ -6,7 +6,7 @@
 - data/idx/recent.json      : 最近 2000 条（跨来源），默认视图首屏用
 - data/idx/<dir>.json       : 每个来源的完整轻量索引 [id, srcIdx, date, title, url]
 - data/body/<dir>/<月>.json : 正文分片，按来源+月份切分，前端点击时按需加载
-- data/body/_meta.json      : 每个来源有哪些月份分片
+- data/body/months.json    : 每个来源有哪些月份分片（勿用 _ 前缀，会命中根目录临时文件忽略规则）
 
 合并规则：按 id 去重；raw 全量数据覆盖旧 items.json（内容更完整）。
 """
@@ -188,7 +188,7 @@ def main():
         with open(os.path.join(p, f"{m}.json"), "w", encoding="utf-8") as f:
             json.dump(content, f, ensure_ascii=False, separators=(",", ":"))
         meta[d].append(m)
-    with open(os.path.join(BODY_DIR, "_meta.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(BODY_DIR, "months.json"), "w", encoding="utf-8") as f:
         json.dump({k: sorted(v, reverse=True) for k, v in meta.items()},
                   f, ensure_ascii=False)
 
