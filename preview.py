@@ -793,10 +793,22 @@ function render() {
   count.textContent = '共 ' + filtered.length.toLocaleString() + ' 条' + (partial ? '（已加载部分）' : '');
   pageNo = 1;
   renderPage();
+
+  // 「加载全部」按钮：全局唯一实例。先清理旧的，避免切换来源时堆叠
+  let wrap = document.getElementById('loadAllWrap');
   if (partial) {
-    list.insertAdjacentHTML('afterend',
-      '<div class="load-all-wrap"><button id="loadAll" class="load-all-btn"></button></div>');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'loadAllWrap';
+      wrap.className = 'load-all-wrap';
+      wrap.innerHTML = '<button id="loadAll" class="load-all-btn"></button>';
+      const bar = document.getElementById('pager');
+      if (bar) bar.insertAdjacentElement('afterend', wrap);
+      else list.insertAdjacentElement('afterend', wrap);
+    }
     updateLoadAllBtn();
+  } else if (wrap) {
+    wrap.remove();
   }
 }
 
@@ -876,8 +888,9 @@ function goPage(n) {
 }
 
 // 点击「加载全部」：拉完所有来源分片后重新渲染
-list.addEventListener('click', async e => {
-  if (e.target.id !== 'loadAll') return;
+// 注意：按钮位于 #list 之外（在 #pager 之后），事件必须委托到 document
+document.addEventListener('click', async e => {
+  if (!e.target || e.target.id !== 'loadAll') return;
   e.target.disabled = true;
   e.target.textContent = '正在加载全部索引…';
   await ensureAll();
