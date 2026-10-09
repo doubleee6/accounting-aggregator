@@ -382,6 +382,35 @@ def main():
   }
   .load-all-btn:hover { background: var(--primary-soft); }
   .load-all-btn:disabled { opacity: .6; cursor: default; }
+
+  /* 分页栏 */
+  .pager {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+    gap: 6px; padding: 22px 4px 10px; font-size: 13.5px;
+  }
+  .pg-btn {
+    min-width: 34px; height: 34px; padding: 0 11px; border-radius: 8px; cursor: pointer;
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    font-size: 13.5px; transition: all .15s;
+  }
+  .pg-btn:hover:not(:disabled):not(.active) { border-color: var(--primary); color: var(--primary); }
+  .pg-btn:disabled { opacity: .4; cursor: default; }
+  .pg-num { padding: 0 6px; }
+  .pg-num.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+  .pg-gap { color: var(--muted); padding: 0 2px; }
+  .pg-jump { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; color: var(--muted); }
+  .pg-input {
+    width: 58px; height: 34px; padding: 0 8px; border-radius: 8px; text-align: center;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    font-size: 13.5px; font-family: inherit;
+  }
+  .pg-input:focus { outline: none; border-color: var(--primary); }
+  .pg-go { padding: 0 12px; }
+  .pg-info { margin-left: 12px; color: var(--muted); font-size: 13px; }
+  @media (max-width: 720px) {
+    .pg-jump { margin-left: 0; }
+    .pg-info { margin-left: 0; width: 100%; text-align: center; }
+  }
   @media (max-width: 720px) {
     .reader-mask { padding: 0; }
     .reader { max-width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; }
@@ -478,8 +507,8 @@ let src = 'all';
 let kw = '';
 let DATA = [];        // 全量索引（异步加载）
 let filtered = [];    // 当前筛选结果
-let shown = 0;        // 已渲染条数
-const PAGE = 60;      // 每批渲染条数
+let pageNo = 1;       // 当前页码（从 1 开始）
+const PAGE = 30;      // 每页条数
 
 // 来源顺序（必须与 build_site.py 的 SOURCES/DIRNAME 一致）
 const SRC_NAMES = ['12366纳税咨询', 'CPA业务探讨', '内部审计', '财政部', '中注协'];
@@ -762,18 +791,88 @@ function render() {
   });
   const partial = !allLoaded;
   count.textContent = '共 ' + filtered.length.toLocaleString() + ' 条' + (partial ? '（已加载部分）' : '');
-  shown = 0;
-  list.innerHTML = '';
-  if (!filtered.length) {
-    list.innerHTML = '<div class="empty">没有匹配的结果</div>';
-  } else {
-    appendMore();
-  }
+  pageNo = 1;
+  renderPage();
   if (partial) {
-    list.insertAdjacentHTML('beforeend',
+    list.insertAdjacentHTML('afterend',
       '<div class="load-all-wrap"><button id="loadAll" class="load-all-btn"></button></div>');
     updateLoadAllBtn();
   }
+}
+
+// 渲染当前页（每页 PAGE 条），并重建分页栏
+function renderPage() {
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE));
+  if (pageNo > totalPages) pageNo = totalPages;
+  if (pageNo < 1) pageNo = 1;
+
+  const start = (pageNo - 1) * PAGE;
+  const slice = filtered.slice(start, start + PAGE);
+  list.innerHTML = slice.length
+    ? slice.map(cardHtml).join('')
+    : '<div class="empty">没有匹配的结果</div>';
+
+  renderPager(totalPages, start);
+}
+
+// 分页栏：上一页 / 页码 / 下一页 / 跳转输入框 / 总数
+function renderPager(totalPages, start) {
+  let bar = document.getElementById('pager');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'pager';
+    bar.className = 'pager';
+    list.insertAdjacentElement('afterend', bar);
+  }
+
+  // 页码窗口：当前页前后各 2 页，首尾各留 1 页，中间用省略号
+  const nums = [];
+  const add = n => { if (n >= 1 && n <= totalPages && !nums.includes(n)) nums.push(n); };
+  add(1);
+  for (let n = pageNo - 2; n <= pageNo + 2; n++) add(n);
+  add(totalPages);
+  nums.sort((a, b) => a - b);
+
+  let html = '<button class="pg-btn" data-pg="' + (pageNo - 1) + '"' +
+    (pageNo <= 1 ? ' disabled' : '') + '>‹ 上一页</button>';
+  let prev = 0;
+  for (const n of nums) {
+    if (prev && n - prev > 1) html += '<span class="pg-gap">…</span>';
+    html += '<button class="pg-btn pg-num' + (n === pageNo ? ' active' : '') +
+      '" data-pg="' + n + '">' + n + '</button>';
+    prev = n;
+  }
+  html += '<button class="pg-btn" data-pg="' + (pageNo + 1) + '"' +
+    (pageNo >= totalPages ? ' disabled' : '') + '>下一页 ›</button>';
+  html += '<span class="pg-jump">前往第 <input id="pgInput" class="pg-input" type="number" '
+    + 'min="1" max="' + totalPages + '" value="' + pageNo + '"> 页'
+    + '<button id="pgGo" class="pg-btn pg-go">跳转</button></span>';
+  html += '<span class="pg-info">共 ' + totalPages.toLocaleString() + ' 页 / '
+    + filtered.length.toLocaleString() + ' 条</span>';
+  bar.innerHTML = html;
+
+  // 事件绑定
+  bar.querySelectorAll('.pg-btn[data-pg]').forEach(b => {
+    b.addEventListener('click', () => goPage(parseInt(b.dataset.pg, 10)));
+  });
+  const inp = document.getElementById('pgInput');
+  const go = document.getElementById('pgGo');
+  if (go) go.addEventListener('click', () => goPage(parseInt(inp.value, 10)));
+  if (inp) inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') goPage(parseInt(inp.value, 10));
+  });
+}
+
+// 跳页：渲染后把列表滚回顶部（分页而非无限滚动，必须回顶）
+function goPage(n) {
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE));
+  if (!Number.isFinite(n)) return;
+  n = Math.min(Math.max(1, n), totalPages);
+  if (n === pageNo) return;
+  pageNo = n;
+  renderPage();
+  const anchor = document.getElementById('list');
+  if (anchor) window.scrollTo({ top: anchor.offsetTop - 96, behavior: 'smooth' });
 }
 
 // 点击「加载全部」：拉完所有来源分片后重新渲染
@@ -786,25 +885,7 @@ list.addEventListener('click', async e => {
   render();
 });
 
-// 分批渲染，避免一次插入过多 DOM 造成卡顿
-function appendMore() {
-  const next = filtered.slice(shown, shown + PAGE);
-  if (!next.length) return;
-  const s = document.getElementById('moreSentinel');
-  if (s) s.remove();
-  list.insertAdjacentHTML('beforeend', next.map(cardHtml).join(''));
-  shown += next.length;
-  if (shown < filtered.length) {
-    list.insertAdjacentHTML('beforeend', '<div id="moreSentinel" class="empty" style="padding:16px 0">向下滚动加载更多…</div>');
-  }
-}
-
-// 滚动到底部自动加载下一批
-window.addEventListener('scroll', () => {
-  if (shown < filtered.length && window.innerHeight + window.scrollY >= document.body.offsetHeight - 400) {
-    appendMore();
-  }
-});
+// 分页导航（页码点击 / 跳转输入框）由 renderPager 内部直接绑定
 
 document.getElementById('q').addEventListener('input', async e => {
   kw = e.target.value.trim();
