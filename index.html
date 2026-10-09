@@ -298,7 +298,7 @@
     </div>
     <div class="status">
       <div class="status-row"><span class="status-label">数据更新至</span><span class="status-val">2026-10-09</span></div>
-      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">2026-10-09 20:22</span><span class="status-dot"></span></div>
+      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">2026-10-09 20:26</span><span class="status-dot"></span></div>
     </div>
   </header>
 
@@ -410,8 +410,8 @@ function rowToObj(r) { return { id: r[0], si: r[1], date: r[2], title: r[3], url
 async function fetchIdx(name) {
   try {
     const r = await fetch('data/idx/' + name + '?v=' + BUILD);
-    return r.ok ? await r.json() : [];
-  } catch (e) { return []; }
+    return r.ok ? await r.json() : null;   // null = 失败，与「空数据」区分开
+  } catch (e) { return null; }
 }
 
 // 把新行并入 DATA（按 id 去重），保持日期倒序
@@ -426,19 +426,35 @@ function absorb(rows) {
   return added;
 }
 
-// 载入某个来源的完整索引分片
-async function ensureSource(si) {
+// 载入某个来源的完整索引分片。返回 true=成功（含数据为空），false=网络失败
+async function ensureSource(si, force) {
   const dir = SRC_DIR[si];
-  if (!dir || loadedDirs.has(dir)) return;
+  if (!dir) return true;
+  if (!force && loadedDirs.has(dir)) return true;
+  const rows = await fetchIdx(dir + '.json');
+  if (rows === null) return false;      // 失败：不标记已加载，留待重试
   loadedDirs.add(dir);
-  absorb(await fetchIdx(dir + '.json'));
+  absorb(rows);
+  return true;
 }
 
-// 载入全部来源（“加载全部”与搜索时使用）
+// 载入全部来源。全部成功才置 allLoaded；失败则保留按钮以便重试
 async function ensureAll() {
-  if (allLoaded) return;
-  for (let i = 0; i < SRC_NAMES.length; i++) await ensureSource(i);
-  allLoaded = true;
+  if (allLoaded) return true;
+  let allOk = true;
+  for (let i = 0; i < SRC_NAMES.length; i++) {
+    if (!await ensureSource(i)) allOk = false;
+  }
+  // 对失败的来源重试一轮（网络抖动通常是瞬时的）
+  if (!allOk) {
+    await new Promise(r => setTimeout(r, 1200));
+    allOk = true;
+    for (let i = 0; i < SRC_NAMES.length; i++) {
+      if (!await ensureSource(i)) allOk = false;
+    }
+  }
+  if (allOk) allLoaded = true;
+  return allOk;
 }
 
 function updateLoadAllBtn() {
@@ -459,7 +475,7 @@ async function loadBodyMeta() {
 
 async function init() {
   const [rows] = await Promise.all([fetchIdx('recent.json'), loadBodyMeta()]);
-  DATA = rows.map(rowToObj);
+  DATA = (rows || []).map(rowToObj);   // rows 为 null 表示首屏索引拉取失败
   render();
   renderDaily();
   openFromHash();
@@ -760,11 +776,20 @@ function goPage(n) {
 // 注意：按钮位于 #list 之外（在 #pager 之后），事件必须委托到 document
 document.addEventListener('click', async e => {
   if (!e.target || e.target.id !== 'loadAll') return;
-  e.target.disabled = true;
-  e.target.textContent = '正在加载全部索引…';
-  await ensureAll();
+  const btn = e.target;
+  btn.disabled = true;
+  btn.textContent = '正在加载全部索引…';
+  const ok = await ensureAll();
   renderDaily();
   render();
+  if (!ok) {
+    // 仍有来源未取到：恢复按钮并提示，允许再点重试
+    const b = document.getElementById('loadAll');
+    if (b) {
+      b.disabled = false;
+      b.textContent = '部分索引加载失败（网络不稳）· 点击重试';
+    }
+  }
 });
 
 // 分页导航（页码点击 / 跳转输入框）由 renderPager 内部直接绑定
