@@ -570,7 +570,8 @@ function fmtKBps(bps) {
 }
 function fmtSec(s) {
   if (!isFinite(s) || s <= 0) return '';
-  return s < 60 ? Math.ceil(s) + ' 秒' : Math.ceil(s / 60) + ' 分钟';
+  if (s < 90) return Math.ceil(s) + ' 秒';
+  return '1 分钟以上';   // 精确到分钟没有意义，且容易吓人
 }
 
 async function fetchIdxProg(name, label, onProgress) {
@@ -649,7 +650,8 @@ async function ensureSource(si, force) {
   if (!force && loadedDirs.has(dir)) return true;
   const nl = SRC_NAMES[si];
   const rows = await fetchIdxProg(dir + '.json', nl, p => {
-    const eta = p.rest > 0 ? ' · 预计还需 ' + fmtSec(p.rest) : '';
+    // 早期（<10%）瞬时速度样本少、波动大，估出的剩余时间会严重失真，干脆不显示
+    const eta = (p.rest > 0 && p.pct >= 0.1) ? ' · 预计还需 ' + fmtSec(p.rest) : '';
     const sp = fmtKBps(p.speed);
     showLoadingNote(
       '<span class="spin"></span>正在加载「' + esc(nl) + '」' +
