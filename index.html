@@ -239,6 +239,21 @@
   .load-all-btn:hover { background: var(--primary-soft); }
   .load-all-btn:disabled { opacity: .6; cursor: default; }
 
+  /* 索引下载进度提示（大分片可达 7.7MB，网络差时需数十秒） */
+  .load-note {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin: 4px 0 12px; padding: 11px 14px; border-radius: 8px;
+    background: var(--primary-soft); border: 1px solid var(--primary);
+    color: var(--text); font-size: 13.5px; text-align: center; flex-wrap: wrap;
+  }
+  .load-note b { font-variant-numeric: tabular-nums; }
+  .spin {
+    width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%;
+    border: 2px solid var(--primary); border-top-color: transparent;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   /* 分页栏 */
   .pager {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
@@ -298,7 +313,7 @@
     </div>
     <div class="status">
       <div class="status-row"><span class="status-label">数据更新至</span><span class="status-val">2026-10-09</span></div>
-      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">2026-10-11 00:02</span><span class="status-dot"></span></div>
+      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">2026-10-11 01:26</span><span class="status-dot"></span></div>
     </div>
   </header>
 
@@ -414,6 +429,76 @@ async function fetchIdx(name) {
   } catch (e) { return null; }
 }
 
+// —— 带进度的索引下载 ——
+// 分片可达 7.7MB，网络差时需数十秒。用流式读取边下边报进度，
+// 避免界面长时间无反馈被误认为卡死。失败返回 null（与「空数据」区分）。
+function fmtMB(n) { return (n / 1048576).toFixed(2) + ' MB'; }
+function fmtKBps(bps) {
+  if (!bps || bps <= 0) return '';
+  return bps < 1048576 ? (bps / 1024).toFixed(0) + ' KB/s' : (bps / 1048576).toFixed(1) + ' MB/s';
+}
+function fmtSec(s) {
+  if (!isFinite(s) || s <= 0) return '';
+  return s < 60 ? Math.ceil(s) + ' 秒' : Math.ceil(s / 60) + ' 分钟';
+}
+
+async function fetchIdxProg(name, label, onProgress) {
+  const url = 'data/idx/' + name + '?v=' + BUILD;
+  const t0 = performance.now();
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const total = +(resp.headers.get('content-length') || 0);
+    // 无流式能力（或体积很小）：直接解析
+    if (!resp.body || !total || total < 200 * 1024) {
+      const txt = await resp.text();
+      return JSON.parse(txt);
+    }
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let got = 0, lastT = t0, lastGot = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      const now = performance.now();
+      if (now - lastT > 220) {
+        const inst = (got - lastGot) / ((now - lastT) / 1000);
+        lastT = now; lastGot = got;
+        const rest = inst > 0 ? (total - got) / inst : 0;
+        onProgress && onProgress({ got, total, pct: got / total, speed: inst, rest });
+      }
+    }
+    onProgress && onProgress({ got, total, pct: 1, speed: got / ((performance.now() - t0) / 1000), rest: 0 });
+    // 拼接后整体解码，避免多字节字符被切断
+    const buf = new Uint8Array(got);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    return JSON.parse(new TextDecoder('utf-8').decode(buf));
+  } catch (e) {
+    return null;
+  }
+}
+
+// 进度提示条：显示在列表上方，加载完自动移除
+function showLoadingNote(html) {
+  let el = document.getElementById('loadNote');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'loadNote';
+    el.className = 'load-note';
+    const list = document.getElementById('list');
+    if (list) list.insertAdjacentElement('beforebegin', el);
+  }
+  el.innerHTML = html;
+  el.style.display = '';
+}
+function hideLoadingNote() {
+  const el = document.getElementById('loadNote');
+  if (el) el.style.display = 'none';
+}
+
 // 把新行并入 DATA（按 id 去重），保持日期倒序
 function absorb(rows) {
   const have = new Set(DATA.map(x => x.id));
@@ -431,7 +516,17 @@ async function ensureSource(si, force) {
   const dir = SRC_DIR[si];
   if (!dir) return true;
   if (!force && loadedDirs.has(dir)) return true;
-  const rows = await fetchIdx(dir + '.json');
+  const nl = SRC_NAMES[si];
+  const rows = await fetchIdxProg(dir + '.json', nl, p => {
+    const eta = p.rest > 0 ? ' · 预计还需 ' + fmtSec(p.rest) : '';
+    const sp = fmtKBps(p.speed);
+    showLoadingNote(
+      '<span class="spin"></span>正在加载「' + esc(nl) + '」' +
+      '<b>' + fmtMB(p.got) + ' / ' + fmtMB(p.total) + '</b>' +
+      '（' + Math.floor(p.pct * 100) + '%）' +
+      (sp ? ' · ' + sp : '') + eta
+    );
+  });
   if (rows === null) return false;      // 失败：不标记已加载，留待重试
   loadedDirs.add(dir);
   absorb(rows);
@@ -441,18 +536,35 @@ async function ensureSource(si, force) {
 // 载入全部来源。全部成功才置 allLoaded；失败则保留按钮以便重试
 async function ensureAll() {
   if (allLoaded) return true;
-  let allOk = true;
+  const todo = [];
   for (let i = 0; i < SRC_NAMES.length; i++) {
+    if (!loadedDirs.has(SRC_DIR[i])) todo.push(i);
+  }
+  let allOk = true;
+  for (let k = 0; k < todo.length; k++) {
+    const i = todo[k];
+    showLoadingNote(
+      '<span class="spin"></span>正在加载全部索引' +
+      '（第 ' + (k + 1) + ' / ' + todo.length + ' 项：' + esc(SRC_NAMES[i]) + '）…'
+    );
     if (!await ensureSource(i)) allOk = false;
   }
   // 对失败的来源重试一轮（网络抖动通常是瞬时的）
   if (!allOk) {
-    await new Promise(r => setTimeout(r, 1200));
-    allOk = true;
+    const failed = [];
     for (let i = 0; i < SRC_NAMES.length; i++) {
-      if (!await ensureSource(i)) allOk = false;
+      if (!loadedDirs.has(SRC_DIR[i])) failed.push(i);
+    }
+    if (failed.length) {
+      showLoadingNote('<span class="spin"></span>部分索引加载失败，正在重试…');
+      await new Promise(r => setTimeout(r, 1200));
+      allOk = true;
+      for (const i of failed) {
+        if (!await ensureSource(i)) allOk = false;
+      }
     }
   }
+  hideLoadingNote();
   if (allOk) allLoaded = true;
   return allOk;
 }
@@ -818,8 +930,10 @@ document.getElementById('sidebar').addEventListener('click', async e => {
   const need = (MATCH[src] || []).filter(n => !loadedDirs.has(SRC_DIR[SRC_NAMES.indexOf(n)]));
   if (need.length) {
     count.textContent = '加载中…';
-    list.innerHTML = '<div class="empty">正在加载「' + need.join('、') + '」…</div>';
+    // 先用轻提示占位（进度条由 ensureSource 上报），避免列表区域一片空白
+    list.innerHTML = '<div class="empty">正在加载「' + need.map(esc).join('、') + '」…</div>';
     for (const n of (MATCH[src] || [])) await ensureSource(SRC_NAMES.indexOf(n));
+    hideLoadingNote();
     renderDaily();
   }
   render();
