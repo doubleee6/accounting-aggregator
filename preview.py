@@ -99,6 +99,17 @@ def main():
         daily_summaries["更早"] = summarize_day(old_items)
     daily_js = json.dumps(daily_summaries, ensure_ascii=False)
 
+    # 各索引分片的「真实字节数」（未压缩）。
+    # ⚠️ 不能在前端用 content-length 做进度分母：线上 CDN 会 gzip 传输，
+    #    content-length 是压缩后大小（bbs_cpa 7.68MB → 2.35MB），
+    #    而 response.body 读出来的是解压后字节，两者口径不同会导致进度 >100%。
+    idx_sizes = {}
+    for dirname in ["tax12366", "bbs_cpa", "bbs_audit", "mof", "cicpa", "recent"]:
+        p = os.path.join("data", "idx", dirname + ".json")
+        if os.path.exists(p):
+            idx_sizes[dirname] = os.path.getsize(p)
+    idx_sizes_js = json.dumps(idx_sizes)
+
     # 左侧分类导航（支持两级：中国会计视野 → CPA业务探讨/内部审计）
     GROUPS = [
         ("财政部", None),
@@ -548,6 +559,9 @@ const SUMMARY_ONLY = {'CPA业务探讨': 1, '内部审计': 1};
 // —— 索引按来源分片，按需加载（支撑十万级条目）——
 const BUILD = String(Date.now());        // 版本号，避免浏览器缓存旧分片
 const TOTAL = __TOTAL__;                 // 索引总条数（构建时写入）
+// 各分片未压缩字节数（构建时写入）。做进度分母用——不能用 content-length：
+// 线上 CDN gzip 传输，header 是压缩后大小，而读取的是解压后字节，口径不同会算出 >100%。
+const IDX_SIZE = __IDX_SIZE__;
 const loadedDirs = new Set();            // 已加载的来源分片
 let allLoaded = false;
 
@@ -580,8 +594,11 @@ async function fetchIdxProg(name, label, onProgress) {
   try {
     const resp = await fetch(url);
     if (!resp.ok) return null;
-    const total = +(resp.headers.get('content-length') || 0);
-    // 无流式能力（或体积很小）：直接解析
+    // 分母优先用构建时记录的真实字节数（未压缩），与 reader 读出的解压字节同口径。
+    // header 的 content-length 在 gzip 响应下是压缩后大小，不能用作分母。
+    const key = name.endsWith('.json') ? name.slice(0, -5) : name;
+    const total = IDX_SIZE[key] || 0;
+    // 体积很小：直接解析，不必上进度
     if (!resp.body || !total || total < 200 * 1024) {
       const txt = await resp.text();
       return JSON.parse(txt);
@@ -589,20 +606,23 @@ async function fetchIdxProg(name, label, onProgress) {
     const reader = resp.body.getReader();
     const chunks = [];
     let got = 0, lastT = t0, lastGot = 0;
+    // 分母兜底：万一实际字节数超出预期（如构建后文件被替换），动态抬高分母，避免 >100%
+    let denom = total;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       chunks.push(value);
       got += value.length;
+      if (got > denom) denom = got;
       const now = performance.now();
       if (now - lastT > 220) {
         const inst = (got - lastGot) / ((now - lastT) / 1000);
         lastT = now; lastGot = got;
-        const rest = inst > 0 ? (total - got) / inst : 0;
-        onProgress && onProgress({ got, total, pct: got / total, speed: inst, rest });
+        const rest = inst > 0 ? Math.max(0, denom - got) / inst : 0;
+        onProgress && onProgress({ got, total: denom, pct: Math.min(1, got / denom), speed: inst, rest });
       }
     }
-    onProgress && onProgress({ got, total, pct: 1, speed: got / ((performance.now() - t0) / 1000), rest: 0 });
+    onProgress && onProgress({ got, total: denom, pct: 1, speed: got / ((performance.now() - t0) / 1000), rest: 0 });
     // 拼接后整体解码，避免多字节字符被切断
     const buf = new Uint8Array(got);
     let off = 0;
@@ -1062,9 +1082,10 @@ document.getElementById('sidebar').addEventListener('click', async e => {
   // 该分类涉及的来源若尚未加载，先加载（避免只看到首屏那部分）
   const need = (MATCH[src] || []).filter(n => !loadedDirs.has(SRC_DIR[SRC_NAMES.indexOf(n)]));
   if (need.length) {
-    count.textContent = '加载中…';
-    // 先用轻提示占位（进度条由 ensureSource 上报），避免列表区域一片空白
+    // 列表区占位（防布局跳动）；详细进度由 loadNote 进度条呈现，计数行不再重复提示
     list.innerHTML = '<div class="empty">正在加载「' + need.map(esc).join('、') + '」…</div>';
+    const bar = document.getElementById('pager');
+    if (bar) bar.innerHTML = '';   // 加载中清空分页栏，避免残留旧页码可点
     for (const n of (MATCH[src] || [])) await ensureSource(SRC_NAMES.indexOf(n));
     hideLoadingNote();
     renderDaily();
@@ -1093,10 +1114,13 @@ init();
                 .replace("__MATCH__", match_js)
                 .replace("__DAILY__", daily_js)
                 .replace("__TOTAL__", str(total))
+                .replace("__IDX_SIZE__", idx_sizes_js)
                 .replace("__LATEST__", latest_date).replace("__CHECK__", check_time))
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"已生成 {OUT}，共 {total} 条数据")
+    print(f"  分片大小（进度分母）：" +
+          "、".join(f"{k}={v/1048576:.2f}MB" for k, v in idx_sizes.items()))
 
 
 if __name__ == "__main__":
