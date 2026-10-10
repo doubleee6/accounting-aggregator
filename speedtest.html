@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分片网速测试 · 会计信息聚合</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --text:#1a1d21; --muted:#6b7280;
+    --ok:#0f9d58; --warn:#d97706; --err:#dc2626; --blue:#1a73e8;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:20px 16px 60px;background:var(--bg);color:var(--text);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  .wrap{max-width:720px;margin:0 auto}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:12px}
+  button{
+    background:var(--blue);color:#fff;border:0;border-radius:8px;
+    padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer;width:100%;
+  }
+  button:disabled{opacity:.55;cursor:default}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line)}
+  .row:last-child{border-bottom:0}
+  .fname{font-family:ui-monospace,Consolas,monospace;font-size:13px}
+  .fsize{color:var(--muted);font-size:12px;margin-left:6px}
+  .res{font-family:ui-monospace,Consolas,monospace;font-size:13px;text-align:right;white-space:nowrap}
+  .res.ok{color:var(--ok)} .res.warn{color:var(--warn)} .res.err{color:var(--err)} .res.run{color:var(--blue)}
+  .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:5px}
+  .bar>i{display:block;height:100%;width:0;background:var(--blue);transition:width .18s}
+  .verdict{margin-top:14px;padding:12px 14px;border-radius:8px;font-size:14px;line-height:1.65;display:none}
+  .verdict.show{display:block}
+  .verdict.good{background:#e8f7ee;border:1px solid #b6e5c8;color:#0b6b3d}
+  .verdict.bad{background:#fdeceb;border:1px solid #f6c4c1;color:#8f1d19}
+  .verdict.mid{background:#fef6e7;border:1px solid #f6dfb2;color:#7a4b06}
+  .meta{color:var(--muted);font-size:12px;margin-top:10px;font-family:ui-monospace,monospace;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>分片网速测试</h1>
+  <div class="sub">在你这台设备的网络下，实测从 GitHub Pages 下载各个索引分片的速度。<br>用来判断线上加载慢是「文件太大」还是「这条网络本身慢」。</div>
+
+  <div class="card">
+    <button id="go">开始测试</button>
+  </div>
+
+  <div class="card" id="list"></div>
+
+  <div class="verdict" id="verdict"></div>
+  <div class="meta" id="meta"></div>
+</div>
+
+<script>
+const CDN = location.protocol === 'file:'
+  ? 'https://doubleee6.github.io/accounting-aggregator/'
+  : new URL('./', location.href).href;
+
+const TESTS = [
+  { file:'data/idx/manifest.json',  label:'manifest.json',  note:'连接开销（TTFB）' },
+  { file:'data/idx/mof.json',       label:'mof.json',       note:'38.7 KB' },
+  { file:'data/idx/recent.json',    label:'recent.json',    note:'392 KB' },
+  { file:'data/idx/bbs_cpa.json',   label:'bbs_cpa.json',   note:'7.68 MB · 目标文件' },
+];
+
+// 单文件超时：大文件给足时间，避免误判
+const TIMEOUT_MS = { 'data/idx/bbs_cpa.json': 150000 };
+const DEFAULT_TIMEOUT = 30000;
+
+const listEl = document.getElementById('list');
+const rows = [];
+
+TESTS.forEach((t, i) => {
+  const div = document.createElement('div');
+  div.innerHTML =
+    '<div class="row">' +
+      '<div><span class="fname">' + t.label + '</span>' +
+      '<span class="fsize">' + t.note + '</span></div>' +
+      '<div class="res run" id="r' + i + '">待测</div>' +
+    '</div>' +
+    '<div class="bar"><i id="b' + i + '"></i></div>';
+  listEl.appendChild(div);
+  rows.push(t);
+});
+
+function setRes(i, text, cls) {
+  const el = document.getElementById('r' + i);
+  el.textContent = text;
+  el.className = 'res ' + (cls || '');
+}
+function setBar(i, pct) {
+  document.getElementById('b' + i).style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+function fmtSpeed(bps) {
+  if (bps < 1024) return bps.toFixed(0) + ' B/s';
+  if (bps < 1048576) return (bps / 1024).toFixed(1) + ' KB/s';
+  return (bps / 1048576).toFixed(2) + ' MB/s';
+}
+function fmtDur(ms) {
+  return ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s';
+}
+
+// 流式下载：边下边报进度，超时也能看到已下多少
+async function measure(i, t) {
+  const url = CDN + t.file + '?t=' + Date.now();
+  const timeoutMs = TIMEOUT_MS[t.file] || DEFAULT_TIMEOUT;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort('timeout'), timeoutMs);
+
+  const t0 = performance.now();
+  let ttfb = 0, got = 0, expect = 0;
+  let lastT = t0, lastGot = 0, inst = 0;
+
+  try {
+    const resp = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+    ttfb = performance.now() - t0;
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    expect = +(resp.headers.get('content-length') || 0);
+
+    const reader = resp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      got += value.length;
+      const now = performance.now();
+      if (now - lastT > 250) {
+        inst = (got - lastGot) / ((now - lastT) / 1000);
+        lastT = now; lastGot = got;
+        const pct = expect ? (got / expect * 100) : 0;
+        setBar(i, pct);
+        setRes(i, fmtBytes(got) + (expect ? ' / ' + fmtBytes(expect) : '') +
+                   ' · ' + fmtSpeed(inst), 'run');
+      }
+    }
+    clearTimeout(timer);
+    const ms = performance.now() - t0;
+    const avg = got / (ms / 1000);
+    setBar(i, 100);
+    return { ok:true, got, expect, ms, ttfb, avg };
+  } catch (e) {
+    clearTimeout(timer);
+    const ms = performance.now() - t0;
+    const avg = got > 0 ? got / (ms / 1000) : 0;
+    const isTimeout = (e && (e.name === 'AbortError' || String(e).includes('timeout')));
+    return { ok:false, got, expect, ms, ttfb, avg, timeout:isTimeout, err:String(e) };
+  }
+}
+
+document.getElementById('go').addEventListener('click', async () => {
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  btn.textContent = '测试中…';
+  document.getElementById('verdict').className = 'verdict';
+  document.getElementById('meta').textContent = '';
+
+  const out = [];
+  for (let i = 0; i < TESTS.length; i++) {
+    setRes(i, '连接中…', 'run');
+    const r = await measure(i, TESTS[i]);
+    out.push({ t: TESTS[i], r });
+
+    if (r.ok) {
+      setRes(i, fmtBytes(r.got) + ' · ' + fmtDur(r.ms) + ' · ' + fmtSpeed(r.avg), 'ok');
+      setBar(i, 100);
+    } else if (r.timeout) {
+      setRes(i, '超时 · 已下 ' + fmtBytes(r.got) +
+                 (r.avg > 0 ? ' · ' + fmtSpeed(r.avg) : ''), 'err');
+    } else {
+      setRes(i, '失败 · ' + (r.err || '').slice(0, 40), 'err');
+    }
+  }
+
+  // 用成功的小/中文件推算基线速度（排除首个 TTFB 测试）
+  const samples = out.filter(o => o.r.ok && o.r.got > 20000 && o.r.avg > 0);
+  const lines = [];
+  let cls = 'mid';
+
+  if (samples.length) {
+    // 取中位平均速度作基线
+    samples.sort((a, b) => a.r.avg - b.r.avg);
+    const base = samples[Math.floor(samples.length / 2)].r.avg;
+    const need = 7681838 / base;
+    lines.push('你这台设备的实测下载速度约 <b>' + fmtSpeed(base) + '</b>。');
+    lines.push('按此速度，<b>bbs_cpa.json（7.68 MB）需要约 ' + fmtDur(need * 1000) + '</b>。');
+
+    const big = out.find(o => o.t.file === 'data/idx/bbs_cpa.json');
+    if (big && big.r.ok) {
+      cls = 'good';
+      lines.push('✔ 大文件在本网络下<b>下载成功</b>，说明线上加载慢只是等待时间问题，' +
+                 '不一定要拆分分片。');
+    } else if (base > 400 * 1024) {
+      cls = 'good';
+      lines.push('✔ 速度 ' + fmtSpeed(base) + ' 属于正常宽带水平，' +
+                 '7.68 MB 应在可接受范围内。刚才超时多半是本机链路问题。');
+    } else if (base > 80 * 1024) {
+      cls = 'mid';
+      lines.push('△ 速度偏慢（' + fmtSpeed(base) + '）。大文件需要等待约 ' +
+                 fmtDur(need * 1000) + '，体验不佳但可用。建议拆分分片。');
+    } else {
+      cls = 'bad';
+      lines.push('✘ 速度很慢（' + fmtSpeed(base) + '）。大文件需要 ' +
+                 fmtDur(need * 1000) + ' 以上，<b>建议拆分分片</b>。');
+    }
+
+    const ttfbSample = out[0].r;
+    if (ttfbSample && ttfbSample.ok) {
+      lines.push('连接建立开销（TTFB）：' + fmtDur(ttfbSample.ttfb) + '。');
+    }
+  } else {
+    cls = 'bad';
+    lines.push('未能取得有效速度样本（小文件也未测通）。可能是当前网络无法访问 GitHub Pages。');
+  }
+
+  const v = document.getElementById('verdict');
+  v.className = 'verdict show ' + cls;
+  v.innerHTML = lines.join('<br>');
+
+  document.getElementById('meta').textContent =
+    'CDN: ' + CDN + '\nUA: ' + navigator.userAgent;
+
+  btn.disabled = false;
+  btn.textContent = '重新测试';
+});
+</script>
+</body>
+</html>
