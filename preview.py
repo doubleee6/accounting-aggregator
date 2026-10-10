@@ -688,16 +688,13 @@ async function openReader(id) {
   history.replaceState(null, '', '#item=' + id);
 
   const c = (await getBody(it)).trim();
-  const isForum = !!SUMMARY_ONLY[SRC_NAMES[it.si]];
   if (!c) {
+    // 未抓到正文：论坛帖多为阅读权限所限，其它来源多为解析失败
+    const isForum = !!SUMMARY_ONLY[SRC_NAMES[it.si]];
     const note = isForum
-      ? '该帖正文需登录论坛才可见，暂未收录。可点击右上角「官网原文」查看完整内容。'
+      ? '该帖未收录正文（可能需要论坛阅读权限）。可点击右上角「官网原文」查看。'
       : '本条正文未抓取到，请点击右上角「官网原文」查看。';
     readerBody.innerHTML = '<div class="reader-note">' + note + '</div>';
-  } else if (isForum) {
-    readerBody.innerHTML =
-      '<div class="reader-note">论坛帖完整正文需登录才可见，以下为 RSS 摘要（' + c.length +
-      ' 字）。完整内容请点右上角「官网原文」。</div>' + renderText(c);
   } else {
     readerBody.innerHTML = renderText(c);
   }

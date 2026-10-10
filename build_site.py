@@ -65,6 +65,39 @@ def load_base_from_site():
     return store
 
 
+def dedup_by_url(items):
+    """按 url 去重，同一帖只保留「物」最全的一条。
+
+    背景：同一帖可能因抓取批次不同而产生两个 id（列表页 id 与 RSS id 算法不同），
+    底库与增量数据并存时会出现「同帖两 id」，其中一条正文是旧的 RSS 摘要。
+    不处理会导致索引引用旧 id、正文显示为截断摘要。
+
+    保留优先级：① 正文更长者；② 正文长度相同则保留元数据更完整者。
+    """
+    best = {}
+    for it in items:
+        u = (it.get("url") or "").strip()
+        if not u:
+            continue
+        cur = best.get(u)
+        if cur is None:
+            best[u] = it
+            continue
+        a = len((it.get("content") or "").strip())
+        b = len((cur.get("content") or "").strip())
+        if a > b:
+            # 新条目正文更全，但补齐旧条目的非空字段（如作者/回复数）
+            for k, v in cur.items():
+                if it.get(k) in (None, "") and v not in (None, ""):
+                    it[k] = v
+            best[u] = it
+        else:
+            for k, v in it.items():
+                if cur.get(k) in (None, "") and v not in (None, ""):
+                    cur[k] = v
+    return list(best.values())
+
+
 def load_all():
     # ① 底库：上次构建产物（idx + body），保证全量数据在 Actions 上也不丢
     store = load_base_from_site()
@@ -95,7 +128,11 @@ def load_all():
                         and "【答复】" in oc and "【答复】" not in v):
                     continue
             old[k] = v
-    return list(store.values())
+    # ③ 去重：同一帖可能因批次不同产生两个 id，按 url 合并，保留正文最全的一条
+    merged = dedup_by_url(list(store.values()))
+    if len(merged) != len(store):
+        print(f"按 url 去重：{len(store)} -> {len(merged)} 条（合并同帖重复 {len(store)-len(merged)} 条）")
+    return merged
 
 
 def apply_tax_detail(items):
