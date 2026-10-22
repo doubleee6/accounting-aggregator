@@ -313,7 +313,7 @@
     </div>
     <div class="status">
       <div class="status-row"><span class="status-label">数据更新至</span><span class="status-val">2026-10-21</span></div>
-      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">2026-10-21 22:14</span><span class="status-dot"></span></div>
+      <div class="status-row"><span class="status-label">最近检查</span><span class="status-val">2026-10-22 13:15</span><span class="status-dot"></span></div>
     </div>
   </header>
 
@@ -419,7 +419,7 @@ const BUILD = String(Date.now());        // 版本号，避免浏览器缓存旧
 const TOTAL = 91132;                 // 索引总条数（构建时写入）
 // 各分片未压缩字节数（构建时写入）。做进度分母用——不能用 content-length：
 // 线上 CDN gzip 传输，header 是压缩后大小，而读取的是解压后字节，口径不同会算出 >100%。
-const IDX_SIZE = {"tax12366": 7485647, "bbs_cpa": 7687854, "bbs_audit": 349121, "mof": 39628, "cicpa": 4475, "recent": 398587};
+const IDX_SIZE = {"tax12366": 7485647, "bbs_cpa": 7687854, "bbs_audit": 349121, "mof": 39628, "cicpa": 4475, "recent": 398491};
 const loadedDirs = new Set();            // 已加载的来源分片
 let allLoaded = false;
 
